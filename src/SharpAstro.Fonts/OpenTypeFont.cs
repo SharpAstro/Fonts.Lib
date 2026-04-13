@@ -1,6 +1,7 @@
 using SharpAstro.Fonts.IO;
 using SharpAstro.Fonts.Outlines;
 using SharpAstro.Fonts.Rasterizer;
+using SharpAstro.Fonts.Tables.Cff;
 using SharpAstro.Fonts.Tables.Cmap;
 using SharpAstro.Fonts.Tables.Glyf;
 using SharpAstro.Fonts.Tables.Head;
@@ -37,12 +38,14 @@ public sealed class OpenTypeFont
     public HmtxTable? Hmtx { get; }
     public LocaTable? Loca { get; }
     public GlyfTable? Glyf { get; }
+    internal CffTable? Cff { get; }
 
     private readonly CmapSubtable? _preferredCmap;
 
     private OpenTypeFont(SfntDirectory directory,
         HeadTable head, MaxpTable maxp, CmapTable cmap,
-        HheaTable? hhea, HmtxTable? hmtx, LocaTable? loca, GlyfTable? glyf)
+        HheaTable? hhea, HmtxTable? hmtx, LocaTable? loca, GlyfTable? glyf,
+        CffTable? cff)
     {
         Directory = directory;
         Head = head;
@@ -52,8 +55,12 @@ public sealed class OpenTypeFont
         Hmtx = hmtx;
         Loca = loca;
         Glyf = glyf;
+        Cff = cff;
         _preferredCmap = cmap.PreferredUnicodeSubtable();
     }
+
+    /// <summary>True if this font uses CFF/CFF2 outlines (rather than TrueType glyf).</summary>
+    public bool HasCffOutlines => Cff is not null;
 
     public ushort NumGlyphs => Maxp.NumGlyphs;
     public ushort UnitsPerEm => Head.UnitsPerEm;
@@ -66,15 +73,16 @@ public sealed class OpenTypeFont
         => _preferredCmap?.GetGlyphId(codepoint) ?? 0u;
 
     /// <summary>
-    /// Decode a TrueType outline. Throws if this font is CFF-flavored (use the
-    /// CFF loader once Phase 4 lands). Returns <see cref="Outline.Empty"/> for
-    /// glyphs with no outline (e.g. space).
+    /// Decode a TrueType outline. Throws if this font is CFF-flavored — use
+    /// <see cref="DrawGlyph"/> or <see cref="RenderGlyph"/> for format-agnostic
+    /// rendering. Returns <see cref="Outline.Empty"/> for glyphs with no
+    /// outline (e.g. space).
     /// </summary>
     public Outline LoadGlyphOutline(uint glyphId)
     {
         if (Glyf is null)
             throw new NotSupportedException(
-                "This font has no 'glyf' table (likely a CFF font; CFF support lands in Phase 4).");
+                "This font has no 'glyf' table — use DrawGlyph(uint, IGlyphSink) for CFF fonts.");
         if (glyphId >= NumGlyphs)
             throw new ArgumentOutOfRangeException(nameof(glyphId),
                 $"glyphId {glyphId} >= numGlyphs {NumGlyphs}");
@@ -82,17 +90,38 @@ public sealed class OpenTypeFont
     }
 
     /// <summary>
+    /// Format-agnostic outline emission. Walks either the 'glyf' (TrueType)
+    /// or 'CFF' (Type 2) data for <paramref name="glyphId"/> and emits path
+    /// commands to <paramref name="sink"/>. Allocation-free past the sink's
+    /// own bookkeeping.
+    /// </summary>
+    public void DrawGlyph(uint glyphId, IGlyphSink sink)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(glyphId, (uint)NumGlyphs);
+
+        if (Cff is not null)
+        {
+            Cff.DrawGlyph(glyphId, sink);
+            return;
+        }
+        if (Glyf is not null)
+        {
+            var outline = Glyf.LoadGlyph(glyphId);
+            if (!outline.IsEmpty) BezierFlattener.Walk(outline, sink);
+            return;
+        }
+        throw new NotSupportedException("Font has neither 'glyf' nor 'CFF ' outline data.");
+    }
+
+    /// <summary>
     /// Rasterize a glyph to an 8-bit grayscale alpha bitmap at
-    /// <paramref name="pixelsPerEm"/>. Convenience wrapper over
-    /// <see cref="LoadGlyphOutline"/> + <see cref="SmoothRasterizer"/>.
+    /// <paramref name="pixelsPerEm"/>. Works for both TrueType and CFF.
     /// </summary>
     public GlyphBitmap RenderGlyph(uint glyphId, float pixelsPerEm,
         int subSamples = SmoothRasterizer.DefaultSubSamples)
-    {
-        var outline = LoadGlyphOutline(glyphId);
-        if (outline.IsEmpty) return GlyphBitmap.Empty;
-        return SmoothRasterizer.Rasterize(outline, pixelsPerEm, UnitsPerEm, subSamples);
-    }
+        => SmoothRasterizer.Rasterize(
+            sink => DrawGlyph(glyphId, sink),
+            pixelsPerEm, UnitsPerEm, subSamples);
 
     /// <summary>
     /// Load a font from raw SFNT bytes. The byte array is wrapped as
@@ -138,7 +167,14 @@ public sealed class OpenTypeFont
             glyf = new GlyfTable(data.Slice((int)glyfRec.Offset, (int)glyfRec.Length), loca);
         }
 
-        return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf);
+        CffTable? cff = null;
+        if (dir.TryGet(Tags.Cff, out var cffRec))
+        {
+            cff = CffTable.Parse(data.Slice((int)cffRec.Offset, (int)cffRec.Length),
+                maxp.NumGlyphs, isCff2: false);
+        }
+
+        return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf, cff);
     }
 
     /// <summary>Convenience: load from a file path.</summary>

@@ -23,6 +23,14 @@ public sealed class SvgPathSink : IGlyphSink
         AppendCoord(cx); _sb.Append(' '); AppendCoord(cy);
         _sb.Append(' '); AppendCoord(x); _sb.Append(' '); AppendCoord(y);
     }
+    public void CubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
+    {
+        if (_sb.Length > 0) _sb.Append(' ');
+        _sb.Append('C');
+        AppendCoord(c1x); _sb.Append(' '); AppendCoord(c1y);
+        _sb.Append(' '); AppendCoord(c2x); _sb.Append(' '); AppendCoord(c2y);
+        _sb.Append(' '); AppendCoord(x); _sb.Append(' '); AppendCoord(y);
+    }
     public void Close() => _sb.Append(" Z");
 
     private void Append(char cmd, float x, float y)

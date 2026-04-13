@@ -24,8 +24,17 @@ public static class SmoothRasterizer
     /// </summary>
     public static GlyphBitmap Rasterize(Outline outline, float pixelsPerEm,
         int unitsPerEm, int subSamples = DefaultSubSamples)
+        => Rasterize(sink => BezierFlattener.Walk(outline, sink),
+            pixelsPerEm, unitsPerEm, subSamples);
+
+    /// <summary>
+    /// Rasterize an arbitrary path producer (TrueType outline walker, CFF
+    /// charstring interpreter, custom path source) at <paramref name="pixelsPerEm"/>.
+    /// </summary>
+    public static GlyphBitmap Rasterize(Action<IGlyphSink> drawTo, float pixelsPerEm,
+        int unitsPerEm, int subSamples = DefaultSubSamples)
     {
-        if (outline.IsEmpty || pixelsPerEm <= 0 || unitsPerEm <= 0)
+        if (drawTo is null || pixelsPerEm <= 0 || unitsPerEm <= 0)
             return GlyphBitmap.Empty;
         if (subSamples < 1) subSamples = 1;
 
@@ -35,7 +44,7 @@ public static class SmoothRasterizer
         //   pixel_x = font_x * scale
         //   pixel_y = -font_y * scale   (font Y-up → bitmap Y-down)
         var collector = new EdgeCollector(scale, offsetX: 0f, offsetY: 0f);
-        BezierFlattener.Walk(outline, collector);
+        drawTo(collector);
 
         if (collector.EdgeCount == 0) return GlyphBitmap.Empty;
 
@@ -243,6 +252,19 @@ public static class SmoothRasterizer
             _curY = ny;
         }
 
+        public void CubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
+        {
+            var nc1x = c1x * _scale + _offsetX;
+            var nc1y = _offsetY - c1y * _scale;
+            var nc2x = c2x * _scale + _offsetX;
+            var nc2y = _offsetY - c2y * _scale;
+            var nx = x * _scale + _offsetX;
+            var ny = _offsetY - y * _scale;
+            SubdivideCubic(_curX, _curY, nc1x, nc1y, nc2x, nc2y, nx, ny, depth: 0);
+            _curX = nx;
+            _curY = ny;
+        }
+
         public void Close()
         {
             if (!_hasStart) return;
@@ -274,6 +296,40 @@ public static class SmoothRasterizer
             var my = (my0 + my1) * 0.5f;
             Subdivide(x0, y0, mx0, my0, mx, my, depth + 1);
             Subdivide(mx, my, mx1, my1, x1, y1, depth + 1);
+        }
+
+        // Recursive midpoint subdivision of a cubic Bézier into line segments.
+        // Same flatness threshold as the quadratic path.
+        private void SubdivideCubic(float x0, float y0,
+            float c1x, float c1y, float c2x, float c2y,
+            float x1, float y1, int depth)
+        {
+            var dx = x1 - x0;
+            var dy = y1 - y0;
+            var cross1 = (c1x - x0) * dy - (c1y - y0) * dx;
+            var cross2 = (c2x - x0) * dy - (c2y - y0) * dx;
+            var lenSq = dx * dx + dy * dy;
+            var maxCrossSq = MathF.Max(cross1 * cross1, cross2 * cross2);
+            if (depth >= 18 || maxCrossSq <= 0.0625f * lenSq + 0.01f)
+            {
+                AddEdge(x0, y0, x1, y1);
+                return;
+            }
+            // de Casteljau split at t = 0.5
+            var p01x = (x0 + c1x) * 0.5f;
+            var p01y = (y0 + c1y) * 0.5f;
+            var p12x = (c1x + c2x) * 0.5f;
+            var p12y = (c1y + c2y) * 0.5f;
+            var p23x = (c2x + x1) * 0.5f;
+            var p23y = (c2y + y1) * 0.5f;
+            var p012x = (p01x + p12x) * 0.5f;
+            var p012y = (p01y + p12y) * 0.5f;
+            var p123x = (p12x + p23x) * 0.5f;
+            var p123y = (p12y + p23y) * 0.5f;
+            var midx = (p012x + p123x) * 0.5f;
+            var midy = (p012y + p123y) * 0.5f;
+            SubdivideCubic(x0, y0, p01x, p01y, p012x, p012y, midx, midy, depth + 1);
+            SubdivideCubic(midx, midy, p123x, p123y, p23x, p23y, x1, y1, depth + 1);
         }
 
         private void AddEdge(float x0, float y0, float x1, float y1)

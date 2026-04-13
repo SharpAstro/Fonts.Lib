@@ -22,6 +22,12 @@ public class RasterizerBaselineTests
         AddSizes(Fixtures.DejaVuSans, 'é', "DejaVu_eacute"); // composite
         // Merida is chess-piece-only — covered by separate (DIR.Lib-ported) tests.
 
+        // CFF coverage via Source Sans 3 (Phase 4).
+        AddSizes(Fixtures.SourceSans3, 'A', "SourceSans_A");
+        AddSizes(Fixtures.SourceSans3, 'g', "SourceSans_g");
+        AddSizes(Fixtures.SourceSans3, 'Q', "SourceSans_Q");
+        AddSizes(Fixtures.SourceSans3, '8', "SourceSans_8");
+
         void AddSizes(string font, int cp, string baseName)
         {
             foreach (var ppem in new[] { 16, 24, 48 })

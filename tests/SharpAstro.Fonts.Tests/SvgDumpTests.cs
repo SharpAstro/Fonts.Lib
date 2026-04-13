@@ -19,12 +19,12 @@ public class SvgDumpTests
     static SvgDumpTests() => Directory.CreateDirectory(DumpDir);
 
     [Theory]
-    [InlineData(Fixtures.DejaVuSans, "AaBbQg0987.,?éü")]
-    [InlineData(Fixtures.Merida,     "AaBbQg0987")]
+    [InlineData(Fixtures.DejaVuSans,  "AaBbQg0987.,?éü")]
+    [InlineData(Fixtures.Merida,      "AaBbQg0987")]
+    [InlineData(Fixtures.SourceSans3, "AaBbQg0987.,?éü")]
     public void DumpAscii(string fontFile, string chars)
     {
         var font = OpenTypeFont.LoadFromFile(Fixtures.Path(fontFile));
-        if (font.Glyf is null) return; // CFF — skip until Phase 4
 
         var fontName = System.IO.Path.GetFileNameWithoutExtension(fontFile);
         var fontDir = System.IO.Path.Combine(DumpDir, fontName);
@@ -34,10 +34,10 @@ public class SvgDumpTests
         {
             var gid = font.GetGlyphId((uint)ch.Value);
             if (gid == 0) continue;
-            var outline = font.LoadGlyphOutline(gid);
-            if (outline.IsEmpty) continue;
 
-            var svg = SvgGlyphWriter.ToSvg(outline,
+            // Format-agnostic: works for TT (DejaVu, Merida) and CFF (SourceSans).
+            var svg = SvgGlyphWriter.ToSvg(
+                sink => font.DrawGlyph(gid, sink),
                 title: $"{fontName} U+{ch.Value:X4} '{ch}' gid={gid}");
             var safeName = SafeFileName($"U+{ch.Value:X4}_{ch}");
             File.WriteAllText(System.IO.Path.Combine(fontDir, safeName + ".svg"), svg);
