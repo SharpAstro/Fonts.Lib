@@ -76,7 +76,8 @@ public class ColrTests
     [Fact]
     public void DumpNotoCOLRv1_SvgSamples()
     {
-        var svgDir = System.IO.Path.Combine(AppContext.BaseDirectory, "ColrSvg");
+        // Same parent folder as outline-only SVG dumps, sub-folder per font.
+        var svgDir = System.IO.Path.Combine(AppContext.BaseDirectory, "SvgDumps", "NotoCOLRv1");
         Directory.CreateDirectory(svgDir);
         var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.Noto_COLRv1));
         int[] codepoints =
