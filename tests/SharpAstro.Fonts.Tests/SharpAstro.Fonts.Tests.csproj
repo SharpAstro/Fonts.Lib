@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <Content Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Baselines\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
