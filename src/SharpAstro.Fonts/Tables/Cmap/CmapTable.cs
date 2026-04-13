@@ -50,6 +50,80 @@ public sealed class CmapTable
         return null;
     }
 
+    /// <summary>
+    /// Look up a glyph id using the strategy described by
+    /// <paramref name="hint"/>. <paramref name="codepoint"/> is the natural
+    /// Unicode codepoint, <paramref name="charCode"/> is the PDF byte/CID
+    /// (often equal to <paramref name="codepoint"/> for plain text).
+    /// Returns 0 if no strategy yields a glyph.
+    /// </summary>
+    public uint GetGlyphIdHinted(uint codepoint, uint charCode, GlyphMapHint hint, ushort numGlyphs)
+    {
+        switch (hint)
+        {
+            case GlyphMapHint.CharCodeIsGID:
+                return charCode > 0 && charCode < numGlyphs ? charCode : 0u;
+
+            case GlyphMapHint.EmbeddedSubset:
+            {
+                var unicode = PreferredUnicodeSubtable();
+                var gid = unicode?.GetGlyphId(codepoint) ?? 0u;
+                if (gid != 0) return gid;
+                if (charCode > 0)
+                {
+                    // MS Symbol cmap with PUA offset.
+                    var symbol = Find(3, 0); // (Windows, Symbol)
+                    if (symbol is not null)
+                    {
+                        gid = symbol.GetGlyphId(0xF000 + charCode);
+                        if (gid != 0) return gid;
+                    }
+                    // Direct GID fallback — Identity-style mapping in the subset.
+                    if (charCode < numGlyphs) return charCode;
+                }
+                return 0u;
+            }
+
+            case GlyphMapHint.Unicode:
+            {
+                var unicode = PreferredUnicodeSubtable();
+                var gid = unicode?.GetGlyphId(codepoint) ?? 0u;
+                if (gid != 0) return gid;
+                if (charCode > 0 && unicode is not null)
+                    gid = unicode.GetGlyphId(charCode);
+                return gid;
+            }
+
+            case GlyphMapHint.Auto:
+            default:
+            {
+                var unicode = PreferredUnicodeSubtable();
+                var gid = unicode?.GetGlyphId(codepoint) ?? 0u;
+                if (gid != 0) return gid;
+                if (charCode == 0) return 0u;
+                var symbol = Find(3, 0);
+                if (symbol is not null)
+                {
+                    gid = symbol.GetGlyphId(0xF000 + charCode);
+                    if (gid != 0) return gid;
+                }
+                var macRoman = Find(1, 0); // (Mac, Roman)
+                if (macRoman is not null)
+                {
+                    gid = macRoman.GetGlyphId(charCode);
+                    if (gid != 0) return gid;
+                }
+                if (unicode is not null)
+                {
+                    gid = unicode.GetGlyphId(charCode);
+                    if (gid != 0) return gid;
+                }
+                if (charCode < numGlyphs) return charCode;
+                return 0u;
+            }
+        }
+    }
+
     public static CmapTable Parse(ReadOnlySpan<byte> data)
     {
         var r = new BigEndianReader(data);

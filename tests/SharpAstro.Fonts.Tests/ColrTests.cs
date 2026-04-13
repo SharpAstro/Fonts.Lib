@@ -74,6 +74,32 @@ public class ColrTests
     }
 
     [Fact]
+    public void DumpNotoCOLRv1_SvgSamples()
+    {
+        var svgDir = System.IO.Path.Combine(AppContext.BaseDirectory, "ColrSvg");
+        Directory.CreateDirectory(svgDir);
+        var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.Noto_COLRv1));
+        int[] codepoints =
+        [
+            0x1F534, 0x1F7E2, 0x1F7E1, 0x2600, 0x1F525, 0x1F600,
+            0x1F308, 0x1F4A1, 0x1F381, 0x2764, 0x1F351, 0x1F34E,
+        ];
+        var written = 0;
+        foreach (var cp in codepoints)
+        {
+            var gid = font.GetGlyphId((uint)cp);
+            if (gid == 0) continue;
+            var svg = ColrSvgWriter.ToSvg(font, gid, title: $"U+{cp:X5}");
+            if (svg is null) continue;
+            File.WriteAllText(System.IO.Path.Combine(svgDir, $"NotoCOLRv1_U+{cp:X5}.svg"), svg);
+            svg.ShouldStartWith("<?xml");
+            svg.ShouldContain("<path");
+            written++;
+        }
+        written.ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
     public void DumpNotoCOLRv1_PngSamples()
     {
         var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.Noto_COLRv1));

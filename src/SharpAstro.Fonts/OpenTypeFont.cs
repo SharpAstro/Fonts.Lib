@@ -83,6 +83,14 @@ public sealed class OpenTypeFont
         => _preferredCmap?.GetGlyphId(codepoint) ?? 0u;
 
     /// <summary>
+    /// Look up a glyph id for a PDF char-code using the strategy in
+    /// <paramref name="hint"/>. PDF embedded subset fonts often need
+    /// non-Unicode lookup paths; see <see cref="GlyphMapHint"/>.
+    /// </summary>
+    public uint GetGlyphId(uint codepoint, uint charCode, GlyphMapHint hint)
+        => Cmap.GetGlyphIdHinted(codepoint, charCode, hint, NumGlyphs);
+
+    /// <summary>
     /// Decode a TrueType outline. Throws if this font is CFF-flavored — use
     /// <see cref="DrawGlyph"/> or <see cref="RenderGlyph"/> for format-agnostic
     /// rendering. Returns <see cref="Outline.Empty"/> for glyphs with no
