@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SharpAstro.Fonts/SharpAstro.Fonts.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SharpAstro.Fonts.Tests/SharpAstro.Fonts.Tests.csproj" />
+  </Folder>
+</Solution>

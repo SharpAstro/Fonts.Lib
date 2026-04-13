@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SharpAstro.Fonts</RootNamespace>
+    <AssemblyName>SharpAstro.Fonts</AssemblyName>
+    <PackageId>SharpAstro.Fonts</PackageId>
+    <Description>Pure-managed, MIT-licensed C# OpenType / TrueType font loader and rasterizer.</Description>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <VersionPrefix>0.1.0-alpha</VersionPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpAstro.Fonts.Tests" />
+  </ItemGroup>
+
+</Project>
