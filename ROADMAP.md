@@ -56,19 +56,31 @@ FreeType-generated golden output for the test corpus.
 - Item variation store, region/tuple math
 - Static instancer
 
-## Phase 8 — TrueType bytecode interpreter
+## Phase 8 — TrueType bytecode interpreter *(deferred indefinitely)*
 
-- ~200 opcodes, graphics state machine, twilight zone
-- Target FreeType v40 grayscale-only mode
-- Largest single phase; ship without it (unhinted) if pixel-perfect
-  small text isn't critical
+See [TODO.md](TODO.md#phase-8--truetype-bytecode-hinting--deprioritized-indefinitely)
+for the cost/benefit analysis. Short version: ~5–8k LOC of the gnarliest
+code in the library, primarily benefits 8–12 px body text in well-hinted
+system fonts — a niche DIR.Lib doesn't live in. Modern AA + supersampling
+covers the realistic use cases. Revisit only if a concrete
+small-text-quality complaint surfaces against a non-DPI-scaled display.
 
 ## Phase 9 — PostScript Type 1 / Type 42 / CID Type 0
 
-- Type 1 charstring interpreter, eexec / charstring decryption
-- Type 42 (TrueType wrapped in PS)
-- CID Type 0 with FDArray
-- Removes the last reason DIR.Lib needs FreeType
+- Type 1 charstring interpreter (different from Type 2: absolute coords,
+  `seac` accented composite, `lsb` op, etc.)
+- eexec + charstring decryption (XOR-stream cipher)
+- Type 42 (TrueType outlines wrapped in PostScript dict)
+- CID Type 0 (Type 1 charstrings indexed by CID via FDArray)
+- Removes the last format the FreeType-backed `FreeTypeGlyphRasterizer`
+  could handle that we don't.
+
+**Status check before starting:** every fixture in our test corpus
+(8 TTFs + Source Sans CFF + Roboto Flex VF) renders end-to-end through
+SharpAstro.Fonts. The "still need FreeType" gap is hypothetical until
+proven by a real production font. Consider going straight to Phase 12
+(see below) and adding Phase 9 only when a real Type 1 PDF embedded
+font surfaces.
 
 ## Phase 10 — Stroker, SDF, kern, vmtx, GPOS-kern
 
