@@ -96,22 +96,25 @@ internal sealed class Interpreter
 
     private void Execute(byte[] code)
     {
-        // Phase 8 foundation: if a hint program hits an unimplemented opcode
-        // path that triggers an out-of-range, swallow the exception rather
-        // than crash the glyph render. Hinted output will be wrong but
-        // rendering proceeds. Remove this guard once opcode coverage is
-        // complete.
-        try
+        // FreeType-style underflow handling (ttinterp.c §TT_RunIns):
+        // before each opcode dispatches, if the stack lacks enough args for
+        // the opcode's documented pop count, fill the missing slots with
+        // zeros instead of throwing. This is FT's non-pedantic default.
+        // Per-instruction range checks (e.g. MINDEX with k > sp) silently
+        // no-op — also matches FT.
+        var ip = 0;
+        while (ip < code.Length)
         {
-            var ip = 0;
-            while (ip < code.Length)
+            var op = code[ip++];
+            var pop = PopPushCount.Pop(op);
+            if (pop > _sp)
             {
-                var op = code[ip++];
-                ip = Dispatch(op, code, ip);
+                var deficit = pop - _sp;
+                for (var i = 0; i < deficit && _sp < _stack.Length; i++)
+                    _stack[_sp++] = 0;
             }
+            ip = Dispatch(op, code, ip);
         }
-        catch (IndexOutOfRangeException) { /* malformed bytecode or missing opcode */ }
-        catch (ArgumentOutOfRangeException) { /* same */ }
     }
 
     private int Dispatch(byte op, byte[] code, int ip)
@@ -188,12 +191,13 @@ internal sealed class Interpreter
                 break;
             }
 
-            // Storage / CVT
-            case Op.RS:     { var i = Pop(); Push(i < _storage.Length ? _storage[i] : 0); break; }
-            case Op.WS:     { var v = Pop(); var i = Pop(); if (i < _storage.Length) _storage[i] = v; break; }
-            case Op.RCVT:   { var i = Pop(); Push(i < _cvt.Length ? _cvt[i] : 0); break; }
-            case Op.WCVTP:  { var v = Pop(); var i = Pop(); if (i < _cvt.Length) _cvt[i] = v; break; }
-            case Op.WCVTF:  { var v = Pop(); var i = Pop(); if (i < _cvt.Length) _cvt[i] = ScaleFunits(v); break; }
+            // Storage / CVT — uint cast covers both negative and oversized in
+            // one comparison.
+            case Op.RS:     { var i = Pop(); Push((uint)i < (uint)_storage.Length ? _storage[i] : 0); break; }
+            case Op.WS:     { var v = Pop(); var i = Pop(); if ((uint)i < (uint)_storage.Length) _storage[i] = v; break; }
+            case Op.RCVT:   { var i = Pop(); Push((uint)i < (uint)_cvt.Length ? _cvt[i] : 0); break; }
+            case Op.WCVTP:  { var v = Pop(); var i = Pop(); if ((uint)i < (uint)_cvt.Length) _cvt[i] = v; break; }
+            case Op.WCVTF:  { var v = Pop(); var i = Pop(); if ((uint)i < (uint)_cvt.Length) _cvt[i] = ScaleFunits(v); break; }
 
             // Arithmetic — all F26.6
             case Op.ADD:    { var b = Pop(); var a = Pop(); Push(a + b); break; }
