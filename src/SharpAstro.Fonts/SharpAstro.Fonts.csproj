@@ -14,4 +14,9 @@
     <InternalsVisibleTo Include="SharpAstro.Fonts.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- PNG decode for CBDT/sbix bitmap glyphs (MIT). -->
+    <PackageReference Include="StbImageSharp" />
+  </ItemGroup>
+
 </Project>

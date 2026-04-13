@@ -49,6 +49,8 @@ internal static class Tags
     public static readonly Tag Cff2 = Tag.Parse("CFF2");
     public static readonly Tag Colr = Tag.Parse("COLR");
     public static readonly Tag Cpal = Tag.Parse("CPAL");
+    public static readonly Tag Cbdt2 = Tag.Parse("CBDT");
+    public static readonly Tag Cblc2 = Tag.Parse("CBLC");
     public static readonly Tag Cbdt = Tag.Parse("CBDT");
     public static readonly Tag Cblc = Tag.Parse("CBLC");
     public static readonly Tag Sbix = Tag.Parse("sbix");

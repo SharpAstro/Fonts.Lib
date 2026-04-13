@@ -4,6 +4,8 @@ using SharpAstro.Fonts.Outlines;
 using SharpAstro.Fonts.Rasterizer;
 using SharpAstro.Fonts.Tables.Cff;
 using SharpAstro.Fonts.Tables.Cmap;
+using SharpAstro.Fonts.Tables.Cbdt;
+using SharpAstro.Fonts.Tables.Cblc;
 using SharpAstro.Fonts.Tables.Colr;
 using SharpAstro.Fonts.Tables.Cpal;
 using SharpAstro.Fonts.Tables.Glyf;
@@ -44,16 +46,22 @@ public sealed class OpenTypeFont
     internal CffTable? Cff { get; }
     public ColrTable? Colr { get; }
     public CpalTable? Cpal { get; }
+    public CblcTable? Cblc { get; }
+    public CbdtTable? Cbdt { get; }
 
     /// <summary>True if this font carries COLR + CPAL color glyph data.</summary>
     public bool HasColorGlyphs => Colr is not null && Cpal is not null;
+
+    /// <summary>True if this font carries CBDT/CBLC color bitmap glyphs.</summary>
+    public bool HasColorBitmaps => Cbdt is not null && Cblc is not null;
 
     private readonly CmapSubtable? _preferredCmap;
 
     private OpenTypeFont(SfntDirectory directory,
         HeadTable head, MaxpTable maxp, CmapTable cmap,
         HheaTable? hhea, HmtxTable? hmtx, LocaTable? loca, GlyfTable? glyf,
-        CffTable? cff, ColrTable? colr, CpalTable? cpal)
+        CffTable? cff, ColrTable? colr, CpalTable? cpal,
+        CblcTable? cblc, CbdtTable? cbdt)
     {
         Directory = directory;
         Head = head;
@@ -66,6 +74,8 @@ public sealed class OpenTypeFont
         Cff = cff;
         Colr = colr;
         Cpal = cpal;
+        Cblc = cblc;
+        Cbdt = cbdt;
         _preferredCmap = cmap.PreferredUnicodeSubtable();
     }
 
@@ -142,12 +152,22 @@ public sealed class OpenTypeFont
             pixelsPerEm, UnitsPerEm, subSamples);
 
     /// <summary>
-    /// Render a color glyph (COLR v0 / v1) to an RGBA bitmap. Returns null
-    /// if this font / glyph has no color data — the caller should fall back
-    /// to <see cref="RenderGlyph"/> + colorize.
+    /// Render a color glyph to an RGBA bitmap. Tries COLR v0/v1 first
+    /// (vector + paint tree), then falls back to CBDT (PNG bitmap strikes).
+    /// Returns null if this font / glyph has no color data — caller should
+    /// fall back to <see cref="RenderGlyph"/>.
     /// </summary>
     public ColorBitmap? RenderColor(uint glyphId, float pixelsPerEm)
-        => HasColorGlyphs ? ColrRenderer.TryRender(this, glyphId, pixelsPerEm) : null;
+    {
+        if (HasColorGlyphs)
+        {
+            var colr = ColrRenderer.TryRender(this, glyphId, pixelsPerEm);
+            if (colr is not null) return colr;
+        }
+        if (HasColorBitmaps)
+            return CbdtRenderer.TryRender(this, glyphId, pixelsPerEm);
+        return null;
+    }
 
     /// <summary>
     /// Load a font from raw SFNT bytes. The byte array is wrapped as
@@ -207,7 +227,15 @@ public sealed class OpenTypeFont
         if (dir.TryGet(Tags.Cpal, out var cpalRec))
             cpal = CpalTable.Parse(cpalRec.Slice(span));
 
-        return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf, cff, colr, cpal);
+        CblcTable? cblc = null;
+        CbdtTable? cbdt = null;
+        if (dir.TryGet(Tags.Cblc2, out var cblcRec))
+            cblc = CblcTable.Parse(cblcRec.Slice(span));
+        if (dir.TryGet(Tags.Cbdt2, out var cbdtRec))
+            cbdt = new CbdtTable(data.Slice((int)cbdtRec.Offset, (int)cbdtRec.Length));
+
+        return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf,
+            cff, colr, cpal, cblc, cbdt);
     }
 
     /// <summary>Convenience: load from a file path.</summary>
