@@ -4,10 +4,14 @@ using SharpAstro.Fonts.Outlines;
 using SharpAstro.Fonts.Rasterizer;
 using SharpAstro.Fonts.Tables.Cff;
 using SharpAstro.Fonts.Tables.Cmap;
+using SharpAstro.Fonts.Tables.Avar;
 using SharpAstro.Fonts.Tables.Cbdt;
 using SharpAstro.Fonts.Tables.Cblc;
 using SharpAstro.Fonts.Tables.Colr;
 using SharpAstro.Fonts.Tables.Cpal;
+using SharpAstro.Fonts.Tables.Fvar;
+using SharpAstro.Fonts.Tables.Gvar;
+using SharpAstro.Fonts.Variations;
 using SharpAstro.Fonts.Tables.Glyf;
 using SharpAstro.Fonts.Tables.Head;
 using SharpAstro.Fonts.Tables.Hhea;
@@ -48,6 +52,9 @@ public sealed class OpenTypeFont
     public CpalTable? Cpal { get; }
     public CblcTable? Cblc { get; }
     public CbdtTable? Cbdt { get; }
+    public FvarTable? Fvar { get; }
+    public AvarTable? Avar { get; }
+    public GvarTable? Gvar { get; }
 
     /// <summary>True if this font carries COLR + CPAL color glyph data.</summary>
     public bool HasColorGlyphs => Colr is not null && Cpal is not null;
@@ -55,13 +62,25 @@ public sealed class OpenTypeFont
     /// <summary>True if this font carries CBDT/CBLC color bitmap glyphs.</summary>
     public bool HasColorBitmaps => Cbdt is not null && Cblc is not null;
 
+    /// <summary>True if this font is variable (has an 'fvar' table).</summary>
+    public bool IsVariable => Fvar is not null;
+
+    /// <summary>
+    /// Currently-active normalized axis coordinates (length = fvar.Axes.Length,
+    /// each in [-1, 1]). All zero = the font's default instance. Empty for
+    /// non-variable fonts.
+    /// </summary>
+    private readonly float[] _normalizedCoords;
+
     private readonly CmapSubtable? _preferredCmap;
 
     private OpenTypeFont(SfntDirectory directory,
         HeadTable head, MaxpTable maxp, CmapTable cmap,
         HheaTable? hhea, HmtxTable? hmtx, LocaTable? loca, GlyfTable? glyf,
         CffTable? cff, ColrTable? colr, CpalTable? cpal,
-        CblcTable? cblc, CbdtTable? cbdt)
+        CblcTable? cblc, CbdtTable? cbdt,
+        FvarTable? fvar, AvarTable? avar, GvarTable? gvar,
+        float[] normalizedCoords)
     {
         Directory = directory;
         Head = head;
@@ -76,7 +95,49 @@ public sealed class OpenTypeFont
         Cpal = cpal;
         Cblc = cblc;
         Cbdt = cbdt;
+        Fvar = fvar;
+        Avar = avar;
+        Gvar = gvar;
+        _normalizedCoords = normalizedCoords;
         _preferredCmap = cmap.PreferredUnicodeSubtable();
+    }
+
+    /// <summary>
+    /// Return a new <see cref="OpenTypeFont"/> instance with the variation
+    /// axes set to <paramref name="userCoords"/> (axis tag → user-space value;
+    /// e.g. <c>{ "wght": 700, "wdth": 100 }</c>). Unspecified axes keep their
+    /// defaults. Throws on a non-variable font. The returned instance is
+    /// fully immutable and shares the parsed tables with <c>this</c>.
+    /// </summary>
+    public OpenTypeFont WithVariation(IReadOnlyDictionary<string, float> userCoords)
+    {
+        if (Fvar is null)
+            throw new InvalidOperationException("Font has no 'fvar' table — not a variable font.");
+
+        var norm = new float[Fvar.Axes.Length];
+        for (var i = 0; i < Fvar.Axes.Length; i++)
+        {
+            var axis = Fvar.Axes[i];
+            var u = axis.Default;
+            if (userCoords.TryGetValue(axis.Tag.ToString(), out var supplied))
+                u = supplied;
+            norm[i] = axis.Normalize(u);
+        }
+        Avar?.Apply(norm);
+
+        return new OpenTypeFont(Directory, Head, Maxp, Cmap, Hhea, Hmtx, Loca, Glyf,
+            Cff, Colr, Cpal, Cblc, Cbdt, Fvar, Avar, Gvar, norm);
+    }
+
+    /// <summary>True when the active variation is non-default (any axis ≠ 0 normalized).</summary>
+    public bool IsVariationActive
+    {
+        get
+        {
+            foreach (var c in _normalizedCoords)
+                if (c != 0f) return true;
+            return false;
+        }
     }
 
     /// <summary>True if this font uses CFF/CFF2 outlines (rather than TrueType glyf).</summary>
@@ -111,10 +172,11 @@ public sealed class OpenTypeFont
         if (Glyf is null)
             throw new NotSupportedException(
                 "This font has no 'glyf' table — use DrawGlyph(uint, IGlyphSink) for CFF fonts.");
-        if (glyphId >= NumGlyphs)
-            throw new ArgumentOutOfRangeException(nameof(glyphId),
-                $"glyphId {glyphId} >= numGlyphs {NumGlyphs}");
-        return Glyf.LoadGlyph(glyphId);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(glyphId, (uint)NumGlyphs);
+        var baseOutline = Glyf.LoadGlyph(glyphId);
+        if (Gvar is not null && IsVariationActive)
+            return OutlineVariation.Apply(baseOutline, Gvar, glyphId, _normalizedCoords);
+        return baseOutline;
     }
 
     /// <summary>
@@ -234,8 +296,19 @@ public sealed class OpenTypeFont
         if (dir.TryGet(Tags.Cbdt2, out var cbdtRec))
             cbdt = new CbdtTable(data.Slice((int)cbdtRec.Offset, (int)cbdtRec.Length));
 
+        FvarTable? fvar = null;
+        AvarTable? avar = null;
+        GvarTable? gvar = null;
+        if (dir.TryGet(Tags.Fvar2, out var fvarRec))
+            fvar = FvarTable.Parse(fvarRec.Slice(span));
+        if (dir.TryGet(Tags.Avar2, out var avarRec))
+            avar = AvarTable.Parse(avarRec.Slice(span));
+        if (dir.TryGet(Tags.Gvar2, out var gvarRec))
+            gvar = GvarTable.Parse(data.Slice((int)gvarRec.Offset, (int)gvarRec.Length));
+        var normCoords = fvar is not null ? new float[fvar.Axes.Length] : Array.Empty<float>();
+
         return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf,
-            cff, colr, cpal, cblc, cbdt);
+            cff, colr, cpal, cblc, cbdt, fvar, avar, gvar, normCoords);
     }
 
     /// <summary>Convenience: load from a file path.</summary>

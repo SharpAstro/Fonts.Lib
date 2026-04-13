@@ -18,12 +18,14 @@ internal static class Fixtures
     public const string BabelStoneXiangqiColour = "BabelStoneXiangqiColour.ttf";
     /// <summary>SourceSans3-Regular.otf — CFF/OTF reference (SIL OFL 1.1).</summary>
     public const string SourceSans3 = "SourceSans3-Regular.otf";
+    /// <summary>RobotoFlex.ttf — variable font reference (SIL OFL 1.1).</summary>
+    public const string RobotoFlex = "RobotoFlex.ttf";
 
     /// <summary>All bundled fixture fonts. Useful for "applies-to-every-font" smoke tests.</summary>
     public static readonly string[] All =
     [
         XXTIIT_Arial_Subset, Tahoma_Subset, ISOCPEUR_Subset, Merida,
         DejaVuSans, Noto_COLRv1, NotoColorEmoji, BabelStoneXiangqiColour,
-        SourceSans3,
+        SourceSans3, RobotoFlex,
     ];
 }
