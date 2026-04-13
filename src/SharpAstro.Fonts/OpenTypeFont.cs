@@ -196,7 +196,9 @@ public sealed class OpenTypeFont
         }
         if (Glyf is not null)
         {
-            var outline = Glyf.LoadGlyph(glyphId);
+            // Use LoadGlyphOutline (not Glyf.LoadGlyph directly) so gvar
+            // deltas are applied when a variation is active.
+            var outline = LoadGlyphOutline(glyphId);
             if (!outline.IsEmpty) BezierFlattener.Walk(outline, sink);
             return;
         }
