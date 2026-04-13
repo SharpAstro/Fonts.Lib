@@ -1,4 +1,5 @@
 using SharpAstro.Fonts.Color;
+using SharpAstro.Fonts.Hinting;
 using SharpAstro.Fonts.IO;
 using SharpAstro.Fonts.Outlines;
 using SharpAstro.Fonts.Rasterizer;
@@ -56,6 +57,16 @@ public sealed class OpenTypeFont
     public AvarTable? Avar { get; }
     public GvarTable? Gvar { get; }
 
+    /// <summary>'cvt ' Control Value Table (FUnit values used by hinting).</summary>
+    internal ushort[]? CvtFunits { get; }
+    /// <summary>'fpgm' Font Program — runs once at face load.</summary>
+    internal byte[]? Fpgm { get; }
+    /// <summary>'prep' CVT Program — runs each size change.</summary>
+    internal byte[]? Prep { get; }
+
+    /// <summary>True if this font ships hinting bytecode (cvt/fpgm/prep present).</summary>
+    public bool HasHinting => Fpgm is not null || Prep is not null;
+
     /// <summary>True if this font carries COLR + CPAL color glyph data.</summary>
     public bool HasColorGlyphs => Colr is not null && Cpal is not null;
 
@@ -80,6 +91,7 @@ public sealed class OpenTypeFont
         CffTable? cff, ColrTable? colr, CpalTable? cpal,
         CblcTable? cblc, CbdtTable? cbdt,
         FvarTable? fvar, AvarTable? avar, GvarTable? gvar,
+        ushort[]? cvtFunits, byte[]? fpgm, byte[]? prep,
         float[] normalizedCoords)
     {
         Directory = directory;
@@ -98,8 +110,31 @@ public sealed class OpenTypeFont
         Fvar = fvar;
         Avar = avar;
         Gvar = gvar;
+        CvtFunits = cvtFunits;
+        Fpgm = fpgm;
+        Prep = prep;
         _normalizedCoords = normalizedCoords;
         _preferredCmap = cmap.PreferredUnicodeSubtable();
+    }
+
+    /// <summary>
+    /// Build a fresh hinting interpreter for this face. fpgm is executed
+    /// immediately so user code only needs to call <see cref="Interpreter.OnSizeChange"/>
+    /// before per-glyph runs. Returns null for fonts without hinting tables.
+    ///
+    /// <para><b>Phase 8 status:</b> the interpreter foundation runs but most
+    /// hinting opcodes are no-ops — output is currently equivalent to the
+    /// unhinted path. See ROADMAP.md / TODO.md.</para>
+    /// </summary>
+    internal Interpreter? CreateHintingInterpreter()
+    {
+        if (!HasHinting) return null;
+        var interp = new Interpreter(
+            Maxp.MaxStackElements, Maxp.MaxStorage,
+            Maxp.MaxFunctionDefs, Maxp.MaxTwilightPoints,
+            CvtFunits ?? []);
+        interp.RunFpgm(Fpgm ?? []);
+        return interp;
     }
 
     /// <summary>
@@ -126,7 +161,8 @@ public sealed class OpenTypeFont
         Avar?.Apply(norm);
 
         return new OpenTypeFont(Directory, Head, Maxp, Cmap, Hhea, Hmtx, Loca, Glyf,
-            Cff, Colr, Cpal, Cblc, Cbdt, Fvar, Avar, Gvar, norm);
+            Cff, Colr, Cpal, Cblc, Cbdt, Fvar, Avar, Gvar,
+            CvtFunits, Fpgm, Prep, norm);
     }
 
     /// <summary>True when the active variation is non-default (any axis ≠ 0 normalized).</summary>
@@ -309,8 +345,22 @@ public sealed class OpenTypeFont
             gvar = GvarTable.Parse(data.Slice((int)gvarRec.Offset, (int)gvarRec.Length));
         var normCoords = fvar is not null ? new float[fvar.Axes.Length] : Array.Empty<float>();
 
+        ushort[]? cvtFunits = null;
+        byte[]? fpgm = null;
+        byte[]? prep = null;
+        if (dir.TryGet(Tags.Cvt2, out var cvtRec))
+        {
+            var cvtBytes = cvtRec.Slice(span);
+            cvtFunits = new ushort[cvtBytes.Length / 2];
+            for (var i = 0; i < cvtFunits.Length; i++)
+                cvtFunits[i] = (ushort)((cvtBytes[i * 2] << 8) | cvtBytes[i * 2 + 1]);
+        }
+        if (dir.TryGet(Tags.Fpgm2, out var fpgmRec)) fpgm = fpgmRec.Slice(span).ToArray();
+        if (dir.TryGet(Tags.Prep2, out var prepRec)) prep = prepRec.Slice(span).ToArray();
+
         return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf,
-            cff, colr, cpal, cblc, cbdt, fvar, avar, gvar, normCoords);
+            cff, colr, cpal, cblc, cbdt, fvar, avar, gvar,
+            cvtFunits, fpgm, prep, normCoords);
     }
 
     /// <summary>Convenience: load from a file path.</summary>

@@ -56,14 +56,35 @@ FreeType-generated golden output for the test corpus.
 - Item variation store, region/tuple math
 - Static instancer
 
-## Phase 8 — TrueType bytecode interpreter *(deferred indefinitely)*
+## Phase 8 — TrueType bytecode interpreter *(in progress)*
 
-See [TODO.md](TODO.md#phase-8--truetype-bytecode-hinting--deprioritized-indefinitely)
-for the cost/benefit analysis. Short version: ~5–8k LOC of the gnarliest
-code in the library, primarily benefits 8–12 px body text in well-hinted
-system fonts — a niche DIR.Lib doesn't live in. Modern AA + supersampling
-covers the realistic use cases. Revisit only if a concrete
-small-text-quality complaint surfaces against a non-DPI-scaled display.
+**Reactivated** after Phase 12 swap revealed that DIR.Lib's baseline
+images depended on FT's hinting. Without hinting, glyphs land at their
+"natural" sub-pixel position which is correct but visually shifts ~1
+px from FT-baseline expectations. Matching FT pixel-perfectly requires
+implementing the hint program execution path.
+
+Scope (FreeType v40 grayscale mode):
+- Interpreter state: operand stack (~256 deep), twilight zone, point
+  storage (current + original outlines), CVT, Storage Area, function
+  table, graphics state (zp0-2, rp0-2, projection / freedom / dual
+  projection vectors, round state, scan control, loop counter, etc.).
+- 3 program contexts: `fpgm` (runs once at face load), `prep` (runs
+  on each size change), per-glyph instructions (during `Glyf.LoadGlyph`).
+- ~150 v40-compatible opcodes (FreeType's modern default drops some
+  legacy / debug ones).
+- Hooks into outline loading: `Glyf.LoadGlyph` becomes
+  `Glyf.LoadGlyph(uint, hintInterpreter?, ppem)` — interpreter runs
+  glyph instructions over the glyph's points before returning the
+  outline. CVT scaled to ppem inside `prep`.
+
+Reference: FreeType source (`src/truetype/ttinterp.c`) + Apple TrueType
+spec + Microsoft OpenType spec §TT instruction set.
+
+Realistic effort: 2-3k LOC over multiple sessions. v40 mode skips some
+legacy opcodes (DELTAC*, complex scan-conversion control, S45ROUND
+edge cases). Scope can shrink further if specific opcodes turn out to
+be unused by the corpus.
 
 ## Phase 9 — PostScript Type 1 / Type 42 / CID Type 0
 

@@ -6,11 +6,14 @@ chose not to do (yet) and why."
 
 ## Deferred phases
 
-### Phase 8 — TrueType bytecode hinting · **deprioritized indefinitely**
+### Phase 8 — TrueType bytecode hinting · **REACTIVATED** (post-Phase-12)
 
-Original roadmap had this as the polish pass for small-text quality. After
-auditing the cost vs benefit for DIR.Lib's actual use case, deferring
-indefinitely.
+Originally deferred for cost/benefit reasons; reactivated after Phase 12
+swap revealed DIR.Lib's baseline images encoded FT's hinted output.
+Without hinting our glyph placement differs by ~1 px from FT baselines
+(visually correct, just unhinted). See ROADMAP.md for active scope.
+
+(Original cost/benefit analysis kept below for reference.)
 
 **What it is:** Full TrueType bytecode interpreter — stack VM, ~200
 opcodes, graphics state machine, twilight zone, `fpgm` / `prep` / per-glyph

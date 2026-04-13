@@ -54,6 +54,10 @@ internal static class Tags
     public static readonly Tag Fvar2 = Tag.Parse("fvar");
     public static readonly Tag Avar2 = Tag.Parse("avar");
     public static readonly Tag Gvar2 = Tag.Parse("gvar");
+    /// <summary>'cvt ' (with trailing space) — Control Value Table for hinting.</summary>
+    public static readonly Tag Cvt2 = Tag.Parse("cvt ");
+    public static readonly Tag Fpgm2 = Tag.Parse("fpgm");
+    public static readonly Tag Prep2 = Tag.Parse("prep");
     public static readonly Tag Cbdt = Tag.Parse("CBDT");
     public static readonly Tag Cblc = Tag.Parse("CBLC");
     public static readonly Tag Sbix = Tag.Parse("sbix");
