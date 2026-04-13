@@ -1,8 +1,11 @@
+using SharpAstro.Fonts.Color;
 using SharpAstro.Fonts.IO;
 using SharpAstro.Fonts.Outlines;
 using SharpAstro.Fonts.Rasterizer;
 using SharpAstro.Fonts.Tables.Cff;
 using SharpAstro.Fonts.Tables.Cmap;
+using SharpAstro.Fonts.Tables.Colr;
+using SharpAstro.Fonts.Tables.Cpal;
 using SharpAstro.Fonts.Tables.Glyf;
 using SharpAstro.Fonts.Tables.Head;
 using SharpAstro.Fonts.Tables.Hhea;
@@ -39,13 +42,18 @@ public sealed class OpenTypeFont
     public LocaTable? Loca { get; }
     public GlyfTable? Glyf { get; }
     internal CffTable? Cff { get; }
+    public ColrTable? Colr { get; }
+    public CpalTable? Cpal { get; }
+
+    /// <summary>True if this font carries COLR + CPAL color glyph data.</summary>
+    public bool HasColorGlyphs => Colr is not null && Cpal is not null;
 
     private readonly CmapSubtable? _preferredCmap;
 
     private OpenTypeFont(SfntDirectory directory,
         HeadTable head, MaxpTable maxp, CmapTable cmap,
         HheaTable? hhea, HmtxTable? hmtx, LocaTable? loca, GlyfTable? glyf,
-        CffTable? cff)
+        CffTable? cff, ColrTable? colr, CpalTable? cpal)
     {
         Directory = directory;
         Head = head;
@@ -56,6 +64,8 @@ public sealed class OpenTypeFont
         Loca = loca;
         Glyf = glyf;
         Cff = cff;
+        Colr = colr;
+        Cpal = cpal;
         _preferredCmap = cmap.PreferredUnicodeSubtable();
     }
 
@@ -124,6 +134,14 @@ public sealed class OpenTypeFont
             pixelsPerEm, UnitsPerEm, subSamples);
 
     /// <summary>
+    /// Render a color glyph (COLR v0 / v1) to an RGBA bitmap. Returns null
+    /// if this font / glyph has no color data — the caller should fall back
+    /// to <see cref="RenderGlyph"/> + colorize.
+    /// </summary>
+    public ColorBitmap? RenderColor(uint glyphId, float pixelsPerEm)
+        => HasColorGlyphs ? ColrRenderer.TryRender(this, glyphId, pixelsPerEm) : null;
+
+    /// <summary>
     /// Load a font from raw SFNT bytes. The byte array is wrapped as
     /// <see cref="ReadOnlyMemory{Byte}"/> and retained — do not mutate it
     /// after passing in.
@@ -174,7 +192,14 @@ public sealed class OpenTypeFont
                 maxp.NumGlyphs, isCff2: false);
         }
 
-        return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf, cff);
+        ColrTable? colr = null;
+        CpalTable? cpal = null;
+        if (dir.TryGet(Tags.Colr, out var colrRec))
+            colr = ColrTable.Parse(data.Slice((int)colrRec.Offset, (int)colrRec.Length));
+        if (dir.TryGet(Tags.Cpal, out var cpalRec))
+            cpal = CpalTable.Parse(cpalRec.Slice(span));
+
+        return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf, cff, colr, cpal);
     }
 
     /// <summary>Convenience: load from a file path.</summary>

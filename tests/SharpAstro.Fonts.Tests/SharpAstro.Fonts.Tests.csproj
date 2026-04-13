@@ -4,7 +4,7 @@
     <IsPackable>false</IsPackable>
     <RootNamespace>SharpAstro.Fonts.Tests</RootNamespace>
     <!-- xUnit test method names conventionally use Under_Scores. -->
-    <NoWarn>$(NoWarn);CA1707;CA1812</NoWarn>
+    <NoWarn>$(NoWarn);CA1707;CA1812;CA1305</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,6 +12,7 @@
     <PackageReference Include="Shouldly" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="xunit.v3" />
+    <PackageReference Include="StbImageSharp" />
   </ItemGroup>
 
   <ItemGroup>
