@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using SharpAstro.Fonts.IO;
 
 namespace SharpAstro.Fonts.Outlines;
@@ -104,6 +105,11 @@ internal static class SimpleGlyphParser
         for (var i = 0; i < pointCount; i++)
             flags[i] &= OnCurve;
 
-        return new Outline(xs, ys, flags, contourEnds, bounds, instructions);
+        return new Outline(
+            ImmutableCollectionsMarshal.AsImmutableArray(xs),
+            ImmutableCollectionsMarshal.AsImmutableArray(ys),
+            ImmutableCollectionsMarshal.AsImmutableArray(flags),
+            ImmutableCollectionsMarshal.AsImmutableArray(contourEnds),
+            bounds, instructions);
     }
 }

@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using SharpAstro.Fonts.Outlines;
 
 namespace SharpAstro.Fonts.Hinting;
@@ -70,7 +71,9 @@ internal static class HintingPipeline
         zone.OrgY[n + 3] = zone.CurY[n + 3] = interp.ScaleFunitsToPx(pp4yFu);
 
         // Compute once — reused for both the interpreter and the output.
-        var ends = outline.ContourEndsArray;
+        // Zero-copy unwrap: the ImmutableArray and the backing int[] share
+        // the same reference; safe because the interpreter only reads it.
+        var ends = ImmutableCollectionsMarshal.AsArray(outline.ContourEndsImmutable)!;
 
         var instructions = outline.Instructions;
         if (instructions is { Length: > 0 })

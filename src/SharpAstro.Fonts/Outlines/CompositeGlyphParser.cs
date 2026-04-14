@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using SharpAstro.Fonts.IO;
 
 namespace SharpAstro.Fonts.Outlines;
@@ -174,7 +175,10 @@ internal static class CompositeGlyphParser
         }
 
         return new Outline(
-            allX.ToArray(), allY.ToArray(), allFlags.ToArray(), allEnds.ToArray(),
+            ImmutableCollectionsMarshal.AsImmutableArray(allX.ToArray()),
+            ImmutableCollectionsMarshal.AsImmutableArray(allY.ToArray()),
+            ImmutableCollectionsMarshal.AsImmutableArray(allFlags.ToArray()),
+            ImmutableCollectionsMarshal.AsImmutableArray(allEnds.ToArray()),
             bounds, compositeInstructions);
     }
 }

@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.InteropServices;
 using SharpAstro.Fonts.Outlines;
 using SharpAstro.Fonts.Tables.Gvar;
 
@@ -115,8 +116,12 @@ internal static class OutlineVariation
                 if (newY[i] > yMax) yMax = newY[i];
             }
             // Variation does not modify flags or contour ends — share the
-            // original backing arrays to avoid .ToArray() copies.
-            return new Outline(newX, newY, outline.FlagsArray, outline.ContourEndsArray,
+            // original immutable arrays (zero-copy).
+            return new Outline(
+                ImmutableCollectionsMarshal.AsImmutableArray(newX),
+                ImmutableCollectionsMarshal.AsImmutableArray(newY),
+                outline.FlagsImmutable,
+                outline.ContourEndsImmutable,
                 (xMin, yMin, xMax, yMax));
         }
         finally

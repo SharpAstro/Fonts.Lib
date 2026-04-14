@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace SharpAstro.Fonts.Outlines;
 
 /// <summary>
@@ -7,9 +9,9 @@ namespace SharpAstro.Fonts.Outlines;
 public readonly record struct OutlinePoint(short X, short Y, bool OnCurve);
 
 /// <summary>
-/// A single glyph outline. Storage is packed into three primitive arrays
-/// (<c>short x</c>, <c>short y</c>, <c>byte flags</c>) — 5 bytes per point —
-/// so a typical letter outline is well under 200 bytes.
+/// A single glyph outline. Storage is packed into four
+/// <see cref="ImmutableArray{T}"/> fields — compile-time immutability
+/// guarantees with zero-overhead span access via <c>.AsSpan()</c>.
 ///
 /// Coordinates are in design (font) units; for composite glyphs they are the
 /// post-transform values rounded to int16 (matches FreeType <c>NO_SCALE</c>
@@ -19,12 +21,13 @@ public readonly record struct OutlinePoint(short X, short Y, bool OnCurve);
 /// </summary>
 public sealed class Outline
 {
-    private readonly short[] _x;
-    private readonly short[] _y;
-    private readonly byte[] _flags;       // bit 0: on-curve
-    private readonly int[] _contourEnds;  // inclusive end indices
+    private readonly ImmutableArray<short> _x;
+    private readonly ImmutableArray<short> _y;
+    private readonly ImmutableArray<byte> _flags;       // bit 0: on-curve
+    private readonly ImmutableArray<int> _contourEnds;  // inclusive end indices
 
-    public Outline(short[] x, short[] y, byte[] flags, int[] contourEnds,
+    public Outline(ImmutableArray<short> x, ImmutableArray<short> y,
+        ImmutableArray<byte> flags, ImmutableArray<int> contourEnds,
         (short XMin, short YMin, short XMax, short YMax) bounds,
         byte[]? instructions = null)
     {
@@ -38,7 +41,10 @@ public sealed class Outline
         Instructions = instructions;
     }
 
-    public static readonly Outline Empty = new([], [], [], [], (0, 0, 0, 0));
+    public static readonly Outline Empty = new(
+        ImmutableArray<short>.Empty, ImmutableArray<short>.Empty,
+        ImmutableArray<byte>.Empty, ImmutableArray<int>.Empty,
+        (0, 0, 0, 0));
 
     /// <summary>
     /// TrueType bytecode instructions for this glyph (Phase 8). Null if the
@@ -49,26 +55,26 @@ public sealed class Outline
     /// </summary>
     public byte[]? Instructions { get; }
 
-    public bool IsEmpty => _contourEnds.Length == 0;
+    public bool IsEmpty => _contourEnds.IsEmpty;
     public int PointCount => _x.Length;
     public int ContourCount => _contourEnds.Length;
     public (short XMin, short YMin, short XMax, short YMax) Bounds { get; }
 
     /// <summary>Read-only view of the X coordinates (design units).</summary>
-    public ReadOnlySpan<short> X => _x;
+    public ReadOnlySpan<short> X => _x.AsSpan();
     /// <summary>Read-only view of the Y coordinates (design units).</summary>
-    public ReadOnlySpan<short> Y => _y;
+    public ReadOnlySpan<short> Y => _y.AsSpan();
     /// <summary>Per-point flags. Bit 0 = on-curve.</summary>
-    public ReadOnlySpan<byte> Flags => _flags;
+    public ReadOnlySpan<byte> Flags => _flags.AsSpan();
     /// <summary>Inclusive end indices for each contour.</summary>
-    public ReadOnlySpan<int> ContourEnds => _contourEnds;
+    public ReadOnlySpan<int> ContourEnds => _contourEnds.AsSpan();
 
-    /// <summary>Internal access to the backing flags array for zero-copy reuse
-    /// in variation / hinting pipelines that do not modify flags.</summary>
-    internal byte[] FlagsArray => _flags;
-    /// <summary>Internal access to the backing contour-ends array for zero-copy
-    /// reuse in variation / hinting pipelines that do not modify contour ends.</summary>
-    internal int[] ContourEndsArray => _contourEnds;
+    /// <summary>Zero-copy immutable flags for sharing between Outline instances
+    /// (e.g. variation pipeline reuses the same flags when only X/Y change).</summary>
+    public ImmutableArray<byte> FlagsImmutable => _flags;
+    /// <summary>Zero-copy immutable contour ends for sharing between Outline
+    /// instances and the hinting pipeline.</summary>
+    public ImmutableArray<int> ContourEndsImmutable => _contourEnds;
 
     public bool IsOnCurve(int pointIndex) => (_flags[pointIndex] & 1) != 0;
 
