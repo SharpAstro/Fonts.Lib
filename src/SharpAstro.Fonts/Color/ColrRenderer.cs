@@ -779,19 +779,23 @@ public static class ColrRenderer
 
     private static float ProjectLinearGradient(Vector2 p, Vector2 p0, Vector2 p1, Vector2 p2)
     {
-        // p2 defines the "rotation" of the gradient line (perpendicular to p0→p1).
-        // Standard COLR linear gradient: project p onto the line through p0
-        // perpendicular to (p2 - p0), normalized so p0 → 0 and p1 → 1.
-        var v01 = p1 - p0;
+        // Per COLR spec: the gradient direction is perpendicular to line(p0, p2).
+        // Rotate (p2 - p0) by 90° to get the gradient axis direction, then
+        // project p along that axis with p0 → 0 and p1 → 1.
         var v02 = p2 - p0;
-        // Rotate v02 by 90° to get the gradient direction; project p along it.
-        // Following COLR spec §6.3.1: t = (v01 · v0p_perp) / |v01_perp|² where _perp is rotation of v02.
-        // Simpler: project p onto v01 directly — this matches what most renderers do
-        // when p2 is co-linear with p0p1, which is the common case.
-        _ = v02; // p2-aware variant deferred to a quality pass
-        var lenSq = v01.LengthSquared();
-        if (lenSq <= 1e-6f) return 0f;
-        return Vector2.Dot(p - p0, v01) / lenSq;
+        var gradDir = new Vector2(-v02.Y, v02.X); // 90° rotation of v02
+
+        var denom = Vector2.Dot(p1 - p0, gradDir);
+        if (MathF.Abs(denom) <= 1e-6f)
+        {
+            // p0→p1 is perpendicular to gradient direction (degenerate).
+            // Fall back to simple p0→p1 projection.
+            var v01 = p1 - p0;
+            var lenSq = v01.LengthSquared();
+            if (lenSq <= 1e-6f) return 0f;
+            return Vector2.Dot(p - p0, v01) / lenSq;
+        }
+        return Vector2.Dot(p - p0, gradDir) / denom;
     }
 
     private static float ProjectRadialGradient(Vector2 p, Vector2 c0, float r0, Vector2 c1, float r1)
