@@ -70,4 +70,7 @@ internal static class Tags
     public static readonly Tag Vmtx = Tag.Parse("vmtx");
     public static readonly Tag Kern = Tag.Parse("kern");
     public static readonly Tag Gpos = Tag.Parse("GPOS");
+    public static readonly Tag Vvar = Tag.Parse("VVAR");
+    /// <summary>'cvar' — CVT Variations table for variable TrueType hinting.</summary>
+    public static readonly Tag Cvar = Tag.Parse("cvar");
 }

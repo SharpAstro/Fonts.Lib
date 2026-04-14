@@ -6,12 +6,14 @@ chose not to do (yet) and why."
 
 ## Deferred phases
 
-### Phase 8 — TrueType bytecode hinting · **REACTIVATED** (post-Phase-12)
+### Phase 8 — TrueType bytecode hinting · **CORE LANDED**
 
-Originally deferred for cost/benefit reasons; reactivated after Phase 12
-swap revealed DIR.Lib's baseline images encoded FT's hinted output.
-Without hinting our glyph placement differs by ~1 px from FT baselines
-(visually correct, just unhinted). See ROADMAP.md for active scope.
+The interpreter foundation + the common-path verbs ship; see ROADMAP.md
+for the current opcode coverage. **Phase 8.5 follow-ups:** DELTAP1/2/3
++ DELTAC1/2/3, ISECT, per-(face, ppem) cache, lock-free per-call
+interpreter snapshot. Validation against DIR.Lib's `RenderAcceptanceTests`
+baselines (16 tests fail without hinting in DIR.Lib's full-FT-removal
+state) is the next downstream consumer task.
 
 (Original cost/benefit analysis kept below for reference.)
 

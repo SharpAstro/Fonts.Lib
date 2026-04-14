@@ -31,9 +31,16 @@ internal static class CompositeGlyphParser
 
     public delegate Outline GlyphLoader(uint glyphId);
 
+    /// <param name="componentOffsetDeltas">
+    /// Per-component (dx, dy) variation deltas from gvar. When non-null, element
+    /// [i] is added to the i-th component's XY translation offsets before
+    /// compositing. Only applied when <c>ArgsAreXYValues</c> is set on the
+    /// component (anchor-point composites ignore this field). Null = no variation.
+    /// </param>
     public static Outline Parse(ref BigEndianReader r,
         (short xMin, short yMin, short xMax, short yMax) bounds,
-        GlyphLoader loader)
+        GlyphLoader loader,
+        (float Dx, float Dy)[]? componentOffsetDeltas = null)
     {
         var allX = new List<short>(64);
         var allY = new List<short>(64);
@@ -41,6 +48,7 @@ internal static class CompositeGlyphParser
         var allEnds = new List<int>(8);
 
         ushort flag;
+        var componentIndex = 0;
         do
         {
             flag = r.ReadUInt16();
@@ -79,7 +87,7 @@ internal static class CompositeGlyphParser
             // Recursively load the referenced sub-glyph (already a fully
             // resolved Outline if it was composite itself).
             var sub = loader((uint)glyphIndex);
-            if (sub.IsEmpty) continue;
+            if (sub.IsEmpty) { componentIndex++; continue; }
 
             var basePointIndex = allX.Count;
 
@@ -93,6 +101,15 @@ internal static class CompositeGlyphParser
             {
                 dx = arg1;
                 dy = arg2;
+
+                // Apply gvar component-offset deltas when present (spec §gvar composite).
+                if (componentOffsetDeltas is not null
+                    && (uint)componentIndex < (uint)componentOffsetDeltas.Length)
+                {
+                    dx += componentOffsetDeltas[componentIndex].Dx;
+                    dy += componentOffsetDeltas[componentIndex].Dy;
+                }
+
                 // Spec: when ScaledComponentOffset is set, the offset is in the
                 // sub-glyph's coordinate system and must be transformed.
                 // UnscaledComponentOffset overrides; default is unscaled.
@@ -111,7 +128,10 @@ internal static class CompositeGlyphParser
                 // points of the parent, arg2 is an index into the sub-glyph.
                 if (arg1 < 0 || arg1 >= allX.Count
                     || arg2 < 0 || arg2 >= sub.PointCount)
+                {
+                    componentIndex++;
                     continue; // malformed; skip component
+                }
                 var parentX = allX[arg1];
                 var parentY = allY[arg1];
                 var subX = sub.X[arg2];
@@ -122,6 +142,8 @@ internal static class CompositeGlyphParser
                 dx = parentX - transformedSubX;
                 dy = parentY - transformedSubY;
             }
+
+            componentIndex++;
 
             for (var i = 0; i < sub.PointCount; i++)
             {

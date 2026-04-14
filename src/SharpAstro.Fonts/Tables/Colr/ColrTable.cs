@@ -1,5 +1,7 @@
 using System.Collections.Frozen;
 using SharpAstro.Fonts.IO;
+using SharpAstro.Fonts.Tables.Hvar;
+using SharpAstro.Fonts.Variations;
 
 namespace SharpAstro.Fonts.Tables.Colr;
 
@@ -36,10 +38,25 @@ public sealed class ColrTable
     private readonly uint[] _v1LayerOffsets;
     private readonly ReadOnlyMemory<byte> _v1LayerListSource;
 
+    /// <summary>
+    /// Item Variation Store embedded in the COLR table (present on COLR v1
+    /// variable fonts). Used to evaluate Var* paint format deltas.
+    /// Null when the table carries no variation data.
+    /// </summary>
+    internal ItemVariationStore? VariationStore { get; }
+
+    /// <summary>
+    /// DeltaSetIndexMap for the COLR VarIndexMap field. Maps a sequential
+    /// per-paint var-index to an (outer, inner) IVS lookup pair.
+    /// Null when absent (var-indices are used directly as outer=0, inner=idx).
+    /// </summary>
+    internal DeltaSetIndexMap? VarIndexMap { get; }
+
     private ColrTable(ushort version,
         FrozenDictionary<ushort, (ushort, ushort)> v0Index, ColrV0Layer[] v0Layers,
         FrozenDictionary<ushort, uint> v1Index, ReadOnlyMemory<byte> v1Source,
-        uint[] v1LayerOffsets, ReadOnlyMemory<byte> v1LayerListSource)
+        uint[] v1LayerOffsets, ReadOnlyMemory<byte> v1LayerListSource,
+        ItemVariationStore? variationStore, DeltaSetIndexMap? varIndexMap)
     {
         Version = version;
         _v0Index = v0Index;
@@ -48,6 +65,29 @@ public sealed class ColrTable
         _v1Source = v1Source;
         _v1LayerOffsets = v1LayerOffsets;
         _v1LayerListSource = v1LayerListSource;
+        VariationStore = variationStore;
+        VarIndexMap = varIndexMap;
+    }
+
+    /// <summary>
+    /// Look up a variation delta for a packed varIndex (outer&lt;&lt;16|inner as
+    /// stored in the paint record, or a sequential index through VarIndexMap)
+    /// against the embedded IVS. Returns 0 when no IVS is present or when
+    /// <paramref name="normalizedCoords"/> is empty (default instance).
+    /// </summary>
+    internal float GetVarDelta(uint varIndex, ReadOnlySpan<float> normalizedCoords)
+    {
+        if (VariationStore is null || normalizedCoords.IsEmpty) return 0f;
+        int outer, inner;
+        if (VarIndexMap is not null)
+            (outer, inner) = VarIndexMap.Map(varIndex);
+        else
+        {
+            // No map: the varIndex encodes outer (high 16 bits) + inner (low 16 bits).
+            outer = (int)(varIndex >> 16);
+            inner = (int)(varIndex & 0xFFFF);
+        }
+        return VariationStore.GetDelta(outer, inner, normalizedCoords);
     }
 
     /// <summary>v0 / fallback: returns the layer slice for <paramref name="gid"/>, or empty span.</summary>
@@ -113,13 +153,18 @@ public sealed class ColrTable
         ReadOnlyMemory<byte> v1Source = ReadOnlyMemory<byte>.Empty;
         var v1LayerOffsets = Array.Empty<uint>();
         ReadOnlyMemory<byte> v1LayerListSource = ReadOnlyMemory<byte>.Empty;
+        ItemVariationStore? variationStore = null;
+        DeltaSetIndexMap? varIndexMap = null;
 
         if (version >= 1)
         {
             var baseGlyphListOff = r.ReadUInt32();
             var layerListOff = r.ReadUInt32();
-            // clipListOff (uint32) + varIndexMapOff (uint32) + itemVariationStoreOff (uint32) — not used here.
-            // Skip them for now.
+            // clipListOff (uint32) + varIndexMapOff (uint32) + itemVariationStoreOff (uint32).
+            var clipListOff = r.ReadUInt32();       // reserved — not used for rendering
+            var varIndexMapOff = r.ReadUInt32();
+            var itemVariationStoreOff = r.ReadUInt32();
+            _ = clipListOff;
 
             if (baseGlyphListOff != 0)
             {
@@ -143,11 +188,18 @@ public sealed class ColrTable
                 for (uint i = 0; i < n; i++)
                     v1LayerOffsets[i] = llR.ReadUInt32();
             }
+
+            if (itemVariationStoreOff != 0)
+                variationStore = ItemVariationStore.Parse(span[(int)itemVariationStoreOff..]);
+
+            if (varIndexMapOff != 0)
+                varIndexMap = DeltaSetIndexMap.Parse(span[(int)varIndexMapOff..]);
         }
 
         return new ColrTable(version,
             v0IndexBuilder.ToFrozenDictionary(), v0Layers,
             v1IndexBuilder.ToFrozenDictionary(), v1Source,
-            v1LayerOffsets, v1LayerListSource);
+            v1LayerOffsets, v1LayerListSource,
+            variationStore, varIndexMap);
     }
 }

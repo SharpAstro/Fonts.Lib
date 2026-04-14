@@ -19,12 +19,16 @@ using SharpAstro.Fonts.Tables.Hhea;
 using SharpAstro.Fonts.Tables.Hmtx;
 using SharpAstro.Fonts.Tables.Gpos;
 using SharpAstro.Fonts.Tables.Hvar;
+using SharpAstro.Fonts.Tables.Mvar;
+using SharpAstro.Fonts.Tables.Vvar;
+using SharpAstro.Fonts.Tables.Cvar;
 using SharpAstro.Fonts.Tables.Vhea;
 using SharpAstro.Fonts.Tables.Vmtx;
 using SharpAstro.Fonts.Tables.Kern;
 using GposTable = SharpAstro.Fonts.Tables.Gpos.GposTable;
 using HvarTable = SharpAstro.Fonts.Tables.Hvar.HvarTable;
 using KernTable = SharpAstro.Fonts.Tables.Kern.KernTable;
+using MvarTable = SharpAstro.Fonts.Tables.Mvar.MvarTable;
 using SharpAstro.Fonts.Tables.Loca;
 using SharpAstro.Fonts.Tables.Maxp;
 using SharpAstro.Fonts.Tables.Sfnt;
@@ -67,6 +71,11 @@ public sealed class OpenTypeFont
     public AvarTable? Avar { get; }
     public GvarTable? Gvar { get; }
     internal HvarTable? Hvar { get; }
+    internal MvarTable? Mvar { get; }
+    internal VvarTable? Vvar { get; }
+    /// <summary>'cvar' CVT Variations — applied by the hinting pipeline when a
+    /// variable font instance deviates from the default variation.</summary>
+    internal CvarTable? Cvar { get; }
     internal KernTable? Kern { get; }
     internal GposTable? Gpos { get; }
 
@@ -113,7 +122,8 @@ public sealed class OpenTypeFont
         CffTable? cff, ColrTable? colr, CpalTable? cpal,
         CblcTable? cblc, CbdtTable? cbdt,
         FvarTable? fvar, AvarTable? avar, GvarTable? gvar,
-        HvarTable? hvar, KernTable? kern, GposTable? gpos,
+        HvarTable? hvar, MvarTable? mvar, VvarTable? vvar, CvarTable? cvar,
+        KernTable? kern, GposTable? gpos,
         ushort[]? cvtFunits, byte[]? fpgm, byte[]? prep,
         float[] normalizedCoords,
         VheaTable? vhea, VmtxTable? vmtx)
@@ -137,6 +147,9 @@ public sealed class OpenTypeFont
         Avar = avar;
         Gvar = gvar;
         Hvar = hvar;
+        Mvar = mvar;
+        Vvar = vvar;
+        Cvar = cvar;
         Kern = kern;
         Gpos = gpos;
         CvtFunits = cvtFunits;
@@ -190,8 +203,8 @@ public sealed class OpenTypeFont
         Avar?.Apply(norm);
 
         return new OpenTypeFont(Directory, Head, Maxp, Cmap, Hhea, Hmtx, Loca, Glyf,
-            Cff, Colr, Cpal, Cblc, Cbdt, Fvar, Avar, Gvar, Hvar, Kern, Gpos,
-            CvtFunits, Fpgm, Prep, norm, Vhea, Vmtx);
+            Cff, Colr, Cpal, Cblc, Cbdt, Fvar, Avar, Gvar, Hvar, Mvar, Vvar, Cvar,
+            Kern, Gpos, CvtFunits, Fpgm, Prep, norm, Vhea, Vmtx);
     }
 
     /// <summary>True when the active variation is non-default (any axis ≠ 0 normalized).</summary>
@@ -238,6 +251,20 @@ public sealed class OpenTypeFont
             throw new NotSupportedException(
                 "This font has no 'glyf' table — use DrawGlyph(uint, IGlyphSink) for CFF fonts.");
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(glyphId, (uint)NumGlyphs);
+
+        // For composite glyphs with variation, apply gvar component-anchor offset
+        // deltas *before* assembling the composite, because they adjust per-component
+        // translations rather than assembled outline points.
+        if (Gvar is not null && IsVariationActive && Glyf.IsComposite(glyphId))
+        {
+            var componentCount = Glyf.GetComponentCount(glyphId);
+            var deltas = CompositeVariation.GetComponentDeltas(
+                Gvar, glyphId, _normalizedCoords, componentCount);
+            // No further OutlineVariation.Apply: composite glyphs have no outline-point
+            // deltas in gvar, only component-anchor deltas applied above.
+            return Glyf.LoadGlyphWithVariation(glyphId, deltas);
+        }
+
         var baseOutline = Glyf.LoadGlyph(glyphId);
         if (Gvar is not null && IsVariationActive)
             return OutlineVariation.Apply(baseOutline, Gvar, glyphId, _normalizedCoords);
@@ -426,6 +453,19 @@ public sealed class OpenTypeFont
         if (dir.TryGet(Tags.Hvar, out var hvarRec))
             hvar = HvarTable.Parse(hvarRec.Slice(span));
 
+        MvarTable? mvar = null;
+        if (dir.TryGet(Tags.Mvar, out var mvarRec))
+            mvar = MvarTable.Parse(mvarRec.Slice(span));
+
+        VvarTable? vvar = null;
+        if (dir.TryGet(Tags.Vvar, out var vvarRec))
+            vvar = VvarTable.Parse(vvarRec.Slice(span));
+
+        // 'cvar' requires knowing the axis count; only parse when fvar was found.
+        CvarTable? cvar = null;
+        if (fvar is not null && dir.TryGet(Tags.Cvar, out var cvarRec))
+            cvar = CvarTable.Parse(cvarRec.Slice(span), (ushort)fvar.Axes.Length);
+
         KernTable? kern = null;
         if (dir.TryGet(Tags.Kern, out var kernRec))
             kern = KernTable.Parse(kernRec.Slice(span));
@@ -459,8 +499,8 @@ public sealed class OpenTypeFont
         if (dir.TryGet(Tags.Prep2, out var prepRec)) prep = prepRec.Slice(span).ToArray();
 
         return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf,
-            cff, colr, cpal, cblc, cbdt, fvar, avar, gvar, hvar, kern, gpos,
-            cvtFunits, fpgm, prep, normCoords, vhea, vmtx);
+            cff, colr, cpal, cblc, cbdt, fvar, avar, gvar, hvar, mvar, vvar, cvar,
+            kern, gpos, cvtFunits, fpgm, prep, normCoords, vhea, vmtx);
     }
 
     /// <summary>Convenience: load from a file path.</summary>

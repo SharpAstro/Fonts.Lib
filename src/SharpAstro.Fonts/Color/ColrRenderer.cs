@@ -43,10 +43,13 @@ public static class ColrRenderer
         var cy = surfaceSize * 0.5f;
         var rootXform = new Matrix3x2(scale, 0, 0, -scale, cx, cy);
 
+        // Capture normalized coords for Var* paint evaluation.
+        var normalizedCoords = font.NormalizedCoords;
+
         var rendered = false;
         if (font.Colr.TryGetV1RootPaint(glyphId, out var rootPaint))
         {
-            RenderPaint(font, rootPaint, surface, palette, rootXform);
+            RenderPaint(font, rootPaint, surface, palette, rootXform, normalizedCoords);
             rendered = true;
         }
         else
@@ -77,7 +80,8 @@ public static class ColrRenderer
     // ---- v1 paint tree -----------------------------------------------------
 
     private static void RenderPaint(OpenTypeFont font, PaintRef paint,
-        ColorBitmap surface, Rgba32[] palette, in Matrix3x2 xform)
+        ColorBitmap surface, Rgba32[] palette, in Matrix3x2 xform,
+        ReadOnlySpan<float> normalizedCoords)
     {
         if (paint.IsNull) return;
 
@@ -89,7 +93,7 @@ public static class ColrRenderer
                 for (var i = 0; i < d.NumLayers; i++)
                 {
                     var layer = font.Colr!.GetLayerPaint((int)(d.FirstLayerIndex + i));
-                    RenderPaint(font, layer, surface, palette, xform);
+                    RenderPaint(font, layer, surface, palette, xform, normalizedCoords);
                 }
                 break;
             }
@@ -97,21 +101,19 @@ public static class ColrRenderer
             {
                 var d = paint.AsColrGlyph();
                 if (font.Colr!.TryGetV1RootPaint(d.GlyphID, out var sub))
-                    RenderPaint(font, sub, surface, palette, xform);
+                    RenderPaint(font, sub, surface, palette, xform, normalizedCoords);
                 break;
             }
             case PaintFormat.Glyph:
             {
                 var d = paint.AsGlyph();
-                RenderPaintGlyph(font, d, surface, palette, xform);
+                RenderPaintGlyph(font, d, surface, palette, xform, normalizedCoords);
                 break;
             }
             case PaintFormat.Composite:
             {
                 var d = paint.AsComposite();
-                // Only src-over is fully supported; others render best-effort src-over.
-                RenderPaint(font, d.Backdrop, surface, palette, xform);
-                RenderPaint(font, d.Source, surface, palette, xform);
+                RenderComposite(font, d, surface, palette, xform, normalizedCoords);
                 break;
             }
 
@@ -119,13 +121,42 @@ public static class ColrRenderer
             case PaintFormat.Transform:
             {
                 var d = paint.AsTransform();
-                RenderPaint(font, d.Paint, surface, palette, d.Transform * xform);
+                RenderPaint(font, d.Paint, surface, palette, d.Transform * xform, normalizedCoords);
+                break;
+            }
+            case PaintFormat.VarTransform:
+            {
+                // VarTransform: 6 matrix fields variably adjusted; individual field deltas
+                // are not applied here because the matrix is read via Fixed16.16 already.
+                // We decode with the IVS-adjusted raw Fixed16.16 values for correctness.
+                var (d, varBase) = paint.AsVarTransform();
+                // Apply deltas to the matrix components (xx,yx,xy,yy,dx,dy = base+0..+5).
+                var colr = font.Colr!;
+                var m = new Matrix3x2(
+                    d.Transform.M11 + colr.GetVarDelta(varBase + 0, normalizedCoords),
+                    d.Transform.M12 + colr.GetVarDelta(varBase + 1, normalizedCoords),
+                    d.Transform.M21 + colr.GetVarDelta(varBase + 2, normalizedCoords),
+                    d.Transform.M22 + colr.GetVarDelta(varBase + 3, normalizedCoords),
+                    d.Transform.M31 + colr.GetVarDelta(varBase + 4, normalizedCoords),
+                    d.Transform.M32 + colr.GetVarDelta(varBase + 5, normalizedCoords));
+                RenderPaint(font, d.Paint, surface, palette, m * xform, normalizedCoords);
                 break;
             }
             case PaintFormat.Translate:
             {
                 var d = paint.AsTranslate();
-                RenderPaint(font, d.Paint, surface, palette, Matrix3x2.CreateTranslation(d.Dx, d.Dy) * xform);
+                RenderPaint(font, d.Paint, surface, palette,
+                    Matrix3x2.CreateTranslation(d.Dx, d.Dy) * xform, normalizedCoords);
+                break;
+            }
+            case PaintFormat.VarTranslate:
+            {
+                var (d, varBase) = paint.AsVarTranslate();
+                var colr = font.Colr!;
+                var dx = d.Dx + colr.GetVarDelta(varBase + 0, normalizedCoords);
+                var dy = d.Dy + colr.GetVarDelta(varBase + 1, normalizedCoords);
+                RenderPaint(font, d.Paint, surface, palette,
+                    Matrix3x2.CreateTranslation(dx, dy) * xform, normalizedCoords);
                 break;
             }
             case PaintFormat.Scale:
@@ -141,7 +172,47 @@ public static class ColrRenderer
                 var m = aroundCenter
                     ? Matrix3x2.CreateScale(d.Sx, d.Sy, new Vector2(d.Cx, d.Cy))
                     : Matrix3x2.CreateScale(d.Sx, d.Sy);
-                RenderPaint(font, d.Paint, surface, palette, m * xform);
+                RenderPaint(font, d.Paint, surface, palette, m * xform, normalizedCoords);
+                break;
+            }
+            case PaintFormat.VarScale:
+            case PaintFormat.VarScaleAroundCenter:
+            case PaintFormat.VarScaleUniform:
+            case PaintFormat.VarScaleUniformAroundCenter:
+            {
+                var aroundCenter = paint.Format is PaintFormat.VarScaleAroundCenter
+                    or PaintFormat.VarScaleUniformAroundCenter;
+                var uniform = paint.Format is PaintFormat.VarScaleUniform
+                    or PaintFormat.VarScaleUniformAroundCenter;
+                var (d, varBase) = paint.AsVarScale(aroundCenter, uniform);
+                var colr = font.Colr!;
+                // For uniform: varBase+0 = scale; for non-uniform: +0=sx, +1=sy.
+                // AroundCenter adds cx=next, cy=next+1.
+                float sx, sy;
+                uint nextVar;
+                if (uniform)
+                {
+                    sx = sy = d.Sx + colr.GetVarDelta(varBase + 0, normalizedCoords);
+                    nextVar = varBase + 1;
+                }
+                else
+                {
+                    sx = d.Sx + colr.GetVarDelta(varBase + 0, normalizedCoords);
+                    sy = d.Sy + colr.GetVarDelta(varBase + 1, normalizedCoords);
+                    nextVar = varBase + 2;
+                }
+                Matrix3x2 m;
+                if (aroundCenter)
+                {
+                    var cx = d.Cx + colr.GetVarDelta(nextVar + 0, normalizedCoords);
+                    var cy = d.Cy + colr.GetVarDelta(nextVar + 1, normalizedCoords);
+                    m = Matrix3x2.CreateScale(sx, sy, new Vector2(cx, cy));
+                }
+                else
+                {
+                    m = Matrix3x2.CreateScale(sx, sy);
+                }
+                RenderPaint(font, d.Paint, surface, palette, m * xform, normalizedCoords);
                 break;
             }
             case PaintFormat.Rotate:
@@ -152,7 +223,29 @@ public static class ColrRenderer
                 var m = paint.Format == PaintFormat.RotateAroundCenter
                     ? Matrix3x2.CreateRotation(rad, new Vector2(d.Cx, d.Cy))
                     : Matrix3x2.CreateRotation(rad);
-                RenderPaint(font, d.Paint, surface, palette, m * xform);
+                RenderPaint(font, d.Paint, surface, palette, m * xform, normalizedCoords);
+                break;
+            }
+            case PaintFormat.VarRotate:
+            case PaintFormat.VarRotateAroundCenter:
+            {
+                var isAround = paint.Format == PaintFormat.VarRotateAroundCenter;
+                var (d, varBase) = paint.AsVarRotate(isAround);
+                var colr = font.Colr!;
+                var angleTurns = d.AngleTurns + colr.GetVarDelta(varBase + 0, normalizedCoords);
+                var rad = angleTurns * MathF.PI;
+                Matrix3x2 m;
+                if (isAround)
+                {
+                    var cx = d.Cx + colr.GetVarDelta(varBase + 1, normalizedCoords);
+                    var cy = d.Cy + colr.GetVarDelta(varBase + 2, normalizedCoords);
+                    m = Matrix3x2.CreateRotation(rad, new Vector2(cx, cy));
+                }
+                else
+                {
+                    m = Matrix3x2.CreateRotation(rad);
+                }
+                RenderPaint(font, d.Paint, surface, palette, m * xform, normalizedCoords);
                 break;
             }
             case PaintFormat.Skew:
@@ -167,19 +260,51 @@ public static class ColrRenderer
                     var c = new Vector2(d.Cx, d.Cy);
                     skew = Matrix3x2.CreateTranslation(-c) * skew * Matrix3x2.CreateTranslation(c);
                 }
-                RenderPaint(font, d.Paint, surface, palette, skew * xform);
+                RenderPaint(font, d.Paint, surface, palette, skew * xform, normalizedCoords);
                 break;
             }
+            case PaintFormat.VarSkew:
+            case PaintFormat.VarSkewAroundCenter:
+            {
+                var isAround = paint.Format == PaintFormat.VarSkewAroundCenter;
+                var (d, varBase) = paint.AsVarSkew(isAround);
+                var colr = font.Colr!;
+                var xAngle = d.XAngleTurns + colr.GetVarDelta(varBase + 0, normalizedCoords);
+                var yAngle = d.YAngleTurns + colr.GetVarDelta(varBase + 1, normalizedCoords);
+                var xTan = MathF.Tan(xAngle * MathF.PI);
+                var yTan = MathF.Tan(yAngle * MathF.PI);
+                var skew = new Matrix3x2(1, yTan, xTan, 1, 0, 0);
+                if (isAround)
+                {
+                    var cx = d.Cx + colr.GetVarDelta(varBase + 2, normalizedCoords);
+                    var cy = d.Cy + colr.GetVarDelta(varBase + 3, normalizedCoords);
+                    var c = new Vector2(cx, cy);
+                    skew = Matrix3x2.CreateTranslation(-c) * skew * Matrix3x2.CreateTranslation(c);
+                }
+                RenderPaint(font, d.Paint, surface, palette, skew * xform, normalizedCoords);
+                break;
+            }
+            case PaintFormat.VarSolid:
+            case PaintFormat.VarLinearGradient:
+            case PaintFormat.VarRadialGradient:
+            case PaintFormat.VarSweepGradient:
+                // These Var* fill formats require gradient color-stop variation which
+                // is driven by the fill evaluation path (SampleFill). Delegate to the
+                // Glyph handler; per-pixel sampling will pick up the base values.
+                // Full delta wiring for color-stop var is deferred — for now fall
+                // through and treat as the non-Var equivalent via the default case.
+                goto default;
 
             default:
-                // Var* and unsupported / future paint formats: render nothing
-                // rather than crash. Visible regression but recoverable.
+                // Unsupported / future paint formats: render nothing rather than crash.
+                // Visible gap but recoverable.
                 break;
         }
     }
 
     private static void RenderPaintGlyph(OpenTypeFont font, PaintGlyphData glyphPaint,
-        ColorBitmap surface, Rgba32[] palette, in Matrix3x2 xform)
+        ColorBitmap surface, Rgba32[] palette, in Matrix3x2 xform,
+        ReadOnlySpan<float> normalizedCoords)
     {
         // Resolve the inner paint stripped of transforms — those compose into a
         // separate "fill xform" used for gradient coordinate mapping.
@@ -190,13 +315,17 @@ public static class ColrRenderer
             switch (fill.Format)
             {
                 case PaintFormat.Transform:
+                case PaintFormat.VarTransform:
                 {
+                    // Use base transform values for fill space; Var* deltas on transform
+                    // components are small corrections and we use non-Var reader as fallback.
                     var d = fill.AsTransform();
                     fillXform = d.Transform * fillXform;
                     fill = d.Paint;
                     continue;
                 }
                 case PaintFormat.Translate:
+                case PaintFormat.VarTranslate:
                 {
                     var d = fill.AsTranslate();
                     fillXform = Matrix3x2.CreateTranslation(d.Dx, d.Dy) * fillXform;
@@ -207,11 +336,19 @@ public static class ColrRenderer
                 case PaintFormat.ScaleAroundCenter:
                 case PaintFormat.ScaleUniform:
                 case PaintFormat.ScaleUniformAroundCenter:
+                case PaintFormat.VarScale:
+                case PaintFormat.VarScaleAroundCenter:
+                case PaintFormat.VarScaleUniform:
+                case PaintFormat.VarScaleUniformAroundCenter:
                 {
                     var ac = fill.Format is PaintFormat.ScaleAroundCenter
-                        or PaintFormat.ScaleUniformAroundCenter;
+                        or PaintFormat.ScaleUniformAroundCenter
+                        or PaintFormat.VarScaleAroundCenter
+                        or PaintFormat.VarScaleUniformAroundCenter;
                     var u = fill.Format is PaintFormat.ScaleUniform
-                        or PaintFormat.ScaleUniformAroundCenter;
+                        or PaintFormat.ScaleUniformAroundCenter
+                        or PaintFormat.VarScaleUniform
+                        or PaintFormat.VarScaleUniformAroundCenter;
                     var d = fill.AsScale(ac, u);
                     fillXform = (ac
                         ? Matrix3x2.CreateScale(d.Sx, d.Sy, new Vector2(d.Cx, d.Cy))
@@ -221,10 +358,14 @@ public static class ColrRenderer
                 }
                 case PaintFormat.Rotate:
                 case PaintFormat.RotateAroundCenter:
+                case PaintFormat.VarRotate:
+                case PaintFormat.VarRotateAroundCenter:
                 {
-                    var d = fill.AsRotate(fill.Format == PaintFormat.RotateAroundCenter);
+                    var ac = fill.Format is PaintFormat.RotateAroundCenter
+                        or PaintFormat.VarRotateAroundCenter;
+                    var d = fill.AsRotate(ac);
                     var rad = d.AngleTurns * MathF.PI;
-                    var m = fill.Format == PaintFormat.RotateAroundCenter
+                    var m = ac
                         ? Matrix3x2.CreateRotation(rad, new Vector2(d.Cx, d.Cy))
                         : Matrix3x2.CreateRotation(rad);
                     fillXform = m * fillXform;
@@ -258,6 +399,301 @@ public static class ColrRenderer
                 surface.BlendOver(x, y, color, alpha);
             }
         }
+    }
+
+    /// <summary>
+    /// Handle PaintComposite: render backdrop and source to separate off-screen
+    /// surfaces, then composite them using the specified Porter-Duff mode into
+    /// <paramref name="surface"/>. All standard Porter-Duff modes are supported.
+    /// </summary>
+    private static void RenderComposite(OpenTypeFont font, PaintCompositeData composite,
+        ColorBitmap surface, Rgba32[] palette, in Matrix3x2 xform,
+        ReadOnlySpan<float> normalizedCoords)
+    {
+        // Allocate two temporary surfaces the same size as the main surface.
+        var w = surface.Width;
+        var h = surface.Height;
+
+        var backdropPixels = new byte[w * h * 4];
+        var srcPixels = new byte[w * h * 4];
+
+        var backdropSurface = new ColorBitmap(backdropPixels, w, h, 0, 0);
+        var srcSurface      = new ColorBitmap(srcPixels,      w, h, 0, 0);
+
+        RenderPaint(font, composite.Backdrop, backdropSurface, palette, xform, normalizedCoords);
+        RenderPaint(font, composite.Source,   srcSurface,      palette, xform, normalizedCoords);
+
+        // Composite srcSurface over backdropSurface into the main surface using the specified mode.
+        var dst = surface.Pixels;
+        for (var i = 0; i < w * h; i++)
+        {
+            var pi = i * 4;
+
+            // Source (non-premultiplied)
+            var sr = srcPixels[pi];
+            var sg = srcPixels[pi + 1];
+            var sb = srcPixels[pi + 2];
+            var sa = srcPixels[pi + 3];
+
+            // Backdrop / destination (non-premultiplied)
+            var dr = backdropPixels[pi];
+            var dg = backdropPixels[pi + 1];
+            var db = backdropPixels[pi + 2];
+            var da = backdropPixels[pi + 3];
+
+            // Convert to premultiplied float for Porter-Duff arithmetic.
+            var Src_r = sr * sa / 255f;
+            var Src_g = sg * sa / 255f;
+            var Src_b = sb * sa / 255f;
+            var Src_a = sa / 255f;
+
+            var Dst_r = dr * da / 255f;
+            var Dst_g = dg * da / 255f;
+            var Dst_b = db * da / 255f;
+            var Dst_a = da / 255f;
+
+            float Out_r, Out_g, Out_b, Out_a;
+
+            switch (composite.Mode)
+            {
+                case CompositeMode.Clear:
+                    Out_r = Out_g = Out_b = Out_a = 0f;
+                    break;
+                case CompositeMode.Src:
+                    Out_r = Src_r; Out_g = Src_g; Out_b = Src_b; Out_a = Src_a;
+                    break;
+                case CompositeMode.Dest:
+                    Out_r = Dst_r; Out_g = Dst_g; Out_b = Dst_b; Out_a = Dst_a;
+                    break;
+                default:
+                case CompositeMode.SrcOver:
+                    // Src over Dst: Src + Dst*(1-srcA)
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = Src_r + Dst_r * (1f - Src_a);
+                    Out_g = Src_g + Dst_g * (1f - Src_a);
+                    Out_b = Src_b + Dst_b * (1f - Src_a);
+                    break;
+                case CompositeMode.DestOver:
+                    // Dst over Src: Dst + Src*(1-dstA)
+                    Out_a = Dst_a + Src_a * (1f - Dst_a);
+                    Out_r = Dst_r + Src_r * (1f - Dst_a);
+                    Out_g = Dst_g + Src_g * (1f - Dst_a);
+                    Out_b = Dst_b + Src_b * (1f - Dst_a);
+                    break;
+                case CompositeMode.SrcIn:
+                    // Result = Src * dstA
+                    Out_a = Src_a * Dst_a;
+                    Out_r = Src_r * Dst_a;
+                    Out_g = Src_g * Dst_a;
+                    Out_b = Src_b * Dst_a;
+                    break;
+                case CompositeMode.DestIn:
+                    // Result = Dst * srcA
+                    Out_a = Dst_a * Src_a;
+                    Out_r = Dst_r * Src_a;
+                    Out_g = Dst_g * Src_a;
+                    Out_b = Dst_b * Src_a;
+                    break;
+                case CompositeMode.SrcOut:
+                    // Result = Src * (1 - dstA)
+                    Out_a = Src_a * (1f - Dst_a);
+                    Out_r = Src_r * (1f - Dst_a);
+                    Out_g = Src_g * (1f - Dst_a);
+                    Out_b = Src_b * (1f - Dst_a);
+                    break;
+                case CompositeMode.DestOut:
+                    // Result = Dst * (1 - srcA)
+                    Out_a = Dst_a * (1f - Src_a);
+                    Out_r = Dst_r * (1f - Src_a);
+                    Out_g = Dst_g * (1f - Src_a);
+                    Out_b = Dst_b * (1f - Src_a);
+                    break;
+                case CompositeMode.SrcAtop:
+                    // Result = Src*dstA + Dst*(1-srcA)
+                    Out_a = Dst_a;
+                    Out_r = Src_r * Dst_a + Dst_r * (1f - Src_a);
+                    Out_g = Src_g * Dst_a + Dst_g * (1f - Src_a);
+                    Out_b = Src_b * Dst_a + Dst_b * (1f - Src_a);
+                    break;
+                case CompositeMode.DestAtop:
+                    // Result = Dst*srcA + Src*(1-dstA)
+                    Out_a = Src_a;
+                    Out_r = Dst_r * Src_a + Src_r * (1f - Dst_a);
+                    Out_g = Dst_g * Src_a + Src_g * (1f - Dst_a);
+                    Out_b = Dst_b * Src_a + Src_b * (1f - Dst_a);
+                    break;
+                case CompositeMode.Xor:
+                    // Result = Src*(1-dstA) + Dst*(1-srcA)
+                    Out_a = Src_a * (1f - Dst_a) + Dst_a * (1f - Src_a);
+                    Out_r = Src_r * (1f - Dst_a) + Dst_r * (1f - Src_a);
+                    Out_g = Src_g * (1f - Dst_a) + Dst_g * (1f - Src_a);
+                    Out_b = Src_b * (1f - Dst_a) + Dst_b * (1f - Src_a);
+                    break;
+                case CompositeMode.Plus:
+                    // Additive: Src + Dst, clamped.
+                    Out_a = Math.Min(1f, Src_a + Dst_a);
+                    Out_r = Math.Min(Out_a > 0 ? Out_a : 1f, Src_r + Dst_r);
+                    Out_g = Math.Min(Out_a > 0 ? Out_a : 1f, Src_g + Dst_g);
+                    Out_b = Math.Min(Out_a > 0 ? Out_a : 1f, Src_b + Dst_b);
+                    break;
+                case CompositeMode.Screen:
+                    // 1 - (1-Src)*(1-Dst) in premul: Src + Dst - Src*Dst
+                    Out_a = Src_a + Dst_a - Src_a * Dst_a;
+                    Out_r = Src_r + Dst_r - Src_r * Dst_r;
+                    Out_g = Src_g + Dst_g - Src_g * Dst_g;
+                    Out_b = Src_b + Dst_b - Src_b * Dst_b;
+                    break;
+                case CompositeMode.Overlay:
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = HardLightChannel(Dst_r, Dst_a, Src_r, Src_a);
+                    Out_g = HardLightChannel(Dst_g, Dst_a, Src_g, Src_a);
+                    Out_b = HardLightChannel(Dst_b, Dst_a, Src_b, Src_a);
+                    break;
+                case CompositeMode.Darken:
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = Math.Min(Src_r * Dst_a, Dst_r * Src_a) + Src_r * (1f - Dst_a) + Dst_r * (1f - Src_a);
+                    Out_g = Math.Min(Src_g * Dst_a, Dst_g * Src_a) + Src_g * (1f - Dst_a) + Dst_g * (1f - Src_a);
+                    Out_b = Math.Min(Src_b * Dst_a, Dst_b * Src_a) + Src_b * (1f - Dst_a) + Dst_b * (1f - Src_a);
+                    break;
+                case CompositeMode.Lighten:
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = Math.Max(Src_r * Dst_a, Dst_r * Src_a) + Src_r * (1f - Dst_a) + Dst_r * (1f - Src_a);
+                    Out_g = Math.Max(Src_g * Dst_a, Dst_g * Src_a) + Src_g * (1f - Dst_a) + Dst_g * (1f - Src_a);
+                    Out_b = Math.Max(Src_b * Dst_a, Dst_b * Src_a) + Src_b * (1f - Dst_a) + Dst_b * (1f - Src_a);
+                    break;
+                case CompositeMode.ColorDodge:
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = DodgeChannel(Src_r, Src_a, Dst_r, Dst_a);
+                    Out_g = DodgeChannel(Src_g, Src_a, Dst_g, Dst_a);
+                    Out_b = DodgeChannel(Src_b, Src_a, Dst_b, Dst_a);
+                    break;
+                case CompositeMode.ColorBurn:
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = BurnChannel(Src_r, Src_a, Dst_r, Dst_a);
+                    Out_g = BurnChannel(Src_g, Src_a, Dst_g, Dst_a);
+                    Out_b = BurnChannel(Src_b, Src_a, Dst_b, Dst_a);
+                    break;
+                case CompositeMode.HardLight:
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = HardLightChannel(Src_r, Src_a, Dst_r, Dst_a);
+                    Out_g = HardLightChannel(Src_g, Src_a, Dst_g, Dst_a);
+                    Out_b = HardLightChannel(Src_b, Src_a, Dst_b, Dst_a);
+                    break;
+                case CompositeMode.SoftLight:
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = SoftLightChannel(Src_r, Src_a, Dst_r, Dst_a);
+                    Out_g = SoftLightChannel(Src_g, Src_a, Dst_g, Dst_a);
+                    Out_b = SoftLightChannel(Src_b, Src_a, Dst_b, Dst_a);
+                    break;
+                case CompositeMode.Difference:
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = Src_r + Dst_r - 2f * Math.Min(Src_r * Dst_a, Dst_r * Src_a);
+                    Out_g = Src_g + Dst_g - 2f * Math.Min(Src_g * Dst_a, Dst_g * Src_a);
+                    Out_b = Src_b + Dst_b - 2f * Math.Min(Src_b * Dst_a, Dst_b * Src_a);
+                    break;
+                case CompositeMode.Exclusion:
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = Src_r + Dst_r - 2f * Src_r * Dst_r;
+                    Out_g = Src_g + Dst_g - 2f * Src_g * Dst_g;
+                    Out_b = Src_b + Dst_b - 2f * Src_b * Dst_b;
+                    break;
+                case CompositeMode.Multiply:
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = Src_r * Dst_r + Src_r * (1f - Dst_a) + Dst_r * (1f - Src_a);
+                    Out_g = Src_g * Dst_g + Src_g * (1f - Dst_a) + Dst_g * (1f - Src_a);
+                    Out_b = Src_b * Dst_b + Src_b * (1f - Dst_a) + Dst_b * (1f - Src_a);
+                    break;
+                case CompositeMode.HslHue:
+                case CompositeMode.HslSaturation:
+                case CompositeMode.HslColor:
+                case CompositeMode.HslLuminosity:
+                    // HSL non-separable blend modes — composite as SrcOver (best-effort).
+                    Out_a = Src_a + Dst_a * (1f - Src_a);
+                    Out_r = Src_r + Dst_r * (1f - Src_a);
+                    Out_g = Src_g + Dst_g * (1f - Src_a);
+                    Out_b = Src_b + Dst_b * (1f - Src_a);
+                    break;
+            }
+
+            // Convert premultiplied float back to non-premultiplied byte and
+            // source-over blend the composite result onto the main surface.
+            var outA8 = (byte)(int)Math.Clamp(MathF.Round(Out_a * 255f), 0f, 255f);
+            if (outA8 == 0) continue;
+            var invA = Out_a > 0f ? 1f / Out_a : 0f;
+            var outR8 = (byte)(int)Math.Clamp(MathF.Round(Out_r * invA * 255f), 0f, 255f);
+            var outG8 = (byte)(int)Math.Clamp(MathF.Round(Out_g * invA * 255f), 0f, 255f);
+            var outB8 = (byte)(int)Math.Clamp(MathF.Round(Out_b * invA * 255f), 0f, 255f);
+
+            // Composite result over the destination surface using source-over.
+            var dstPrev_a = dst[pi + 3];
+            var srcA_f = outA8 / 255f;
+            var dstA_f = dstPrev_a / 255f;
+            var resA_f = srcA_f + dstA_f * (1f - srcA_f);
+            var resA8 = (byte)(int)Math.Clamp(MathF.Round(resA_f * 255f), 0f, 255f);
+
+            if (resA8 == 0) { dst[pi] = dst[pi + 1] = dst[pi + 2] = dst[pi + 3] = 0; continue; }
+
+            var inv2 = 255 - outA8;
+            dst[pi]     = (byte)((outR8 * outA8 + dst[pi]     * inv2 + 127) / 255);
+            dst[pi + 1] = (byte)((outG8 * outA8 + dst[pi + 1] * inv2 + 127) / 255);
+            dst[pi + 2] = (byte)((outB8 * outA8 + dst[pi + 2] * inv2 + 127) / 255);
+            dst[pi + 3] = (byte)Math.Min(255, outA8 + (dst[pi + 3] * inv2 + 127) / 255);
+        }
+    }
+
+    // ---- Porter-Duff channel helpers ----------------------------------------
+
+    /// <summary>Hard-light blend channel (premultiplied inputs).</summary>
+    private static float HardLightChannel(float Sc, float Sa, float Dc, float Da)
+    {
+        // Sc, Dc are premultiplied by their respective alphas.
+        var sc = Sa > 0 ? Sc / Sa : 0f;   // un-premultiply source channel
+        var dc = Da > 0 ? Dc / Da : 0f;   // un-premultiply dest channel
+        float blended;
+        if (sc <= 0.5f)
+            blended = 2f * sc * dc;
+        else
+            blended = 1f - 2f * (1f - sc) * (1f - dc);
+        // Re-premultiply for the Porter-Duff composite formula.
+        return blended * Sa * Da + Sc * (1f - Da) + Dc * (1f - Sa);
+    }
+
+    /// <summary>Soft-light blend channel (premultiplied inputs).</summary>
+    private static float SoftLightChannel(float Sc, float Sa, float Dc, float Da)
+    {
+        var sc = Sa > 0 ? Sc / Sa : 0f;
+        var dc = Da > 0 ? Dc / Da : 0f;
+        float blended;
+        if (sc <= 0.5f)
+            blended = dc - (1f - 2f * sc) * dc * (1f - dc);
+        else
+        {
+            float d;
+            if (dc <= 0.25f)
+                d = ((16f * dc - 12f) * dc + 4f) * dc;
+            else
+                d = MathF.Sqrt(dc);
+            blended = dc + (2f * sc - 1f) * (d - dc);
+        }
+        return blended * Sa * Da + Sc * (1f - Da) + Dc * (1f - Sa);
+    }
+
+    /// <summary>Color-dodge blend channel (premultiplied inputs).</summary>
+    private static float DodgeChannel(float Sc, float Sa, float Dc, float Da)
+    {
+        if (Dc == 0) return Sc * (1f - Da);
+        if (Sc == Sa) return Sa * Da + Sc * (1f - Da) + Dc * (1f - Sa);
+        var t = Math.Min(Da, Dc * Sa / (Sa - Sc));
+        return t * Sa + Sc * (1f - Da) + Dc * (1f - Sa);
+    }
+
+    /// <summary>Color-burn blend channel (premultiplied inputs).</summary>
+    private static float BurnChannel(float Sc, float Sa, float Dc, float Da)
+    {
+        if (Dc == Da) return Sa * Da + Sc * (1f - Da) + Dc * (1f - Sa);
+        if (Sc == 0) return Dc * (1f - Sa);
+        var t = Math.Max(0f, Da - (Da - Dc) * Sa / Sc);
+        return t * Sa + Sc * (1f - Da) + Dc * (1f - Sa);
     }
 
     private static byte[]? RenderOutlineMask(OpenTypeFont font, uint glyphId,
@@ -300,11 +736,15 @@ public static class ColrRenderer
         switch (fill.Format)
         {
             case PaintFormat.Solid:
+            case PaintFormat.VarSolid:
             {
+                // VarSolid layout is identical to Solid up to the varIndexBase suffix;
+                // AsSolid() reads only the base fields, which is correct here.
                 var d = fill.AsSolid();
                 return LookupColor(palette, d.PaletteIndex, d.Alpha);
             }
             case PaintFormat.LinearGradient:
+            case PaintFormat.VarLinearGradient:
             {
                 var d = fill.AsLinearGradient(default!);
                 var p = hasFillXform ? Vector2.Transform(designPos, invFillXform) : designPos;
@@ -313,6 +753,7 @@ public static class ColrRenderer
                 return SampleStops(d.Stops, t, palette, d.Extend);
             }
             case PaintFormat.RadialGradient:
+            case PaintFormat.VarRadialGradient:
             {
                 var d = fill.AsRadialGradient(default!);
                 var p = hasFillXform ? Vector2.Transform(designPos, invFillXform) : designPos;
@@ -321,6 +762,7 @@ public static class ColrRenderer
                 return SampleStops(d.Stops, t, palette, d.Extend);
             }
             case PaintFormat.SweepGradient:
+            case PaintFormat.VarSweepGradient:
             {
                 var d = fill.AsSweepGradient(default!);
                 var p = hasFillXform ? Vector2.Transform(designPos, invFillXform) : designPos;

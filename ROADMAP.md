@@ -56,7 +56,21 @@ FreeType-generated golden output for the test corpus.
 - Item variation store, region/tuple math
 - Static instancer
 
-## Phase 8 — TrueType bytecode interpreter *(in progress)*
+## Phase 8 — TrueType bytecode interpreter *(core done)*
+
+**Status update:** the interpreter now runs glyph hint programs end-to-end
+via `OpenTypeFont.LoadHintedOutline(gid, ppem)` and
+`RenderGlyphHinted(gid, ppem)`. Implemented opcodes cover the v40 grayscale
+common path: stack/arithmetic/logic/storage/CVT, all round modes
+(RTG/RTHG/RTDG/RUTG/RDTG/ROFF/SROUND/S45ROUND), full graphics state setters,
+function defs / control flow, projection / freedom / dual vector setters
+(SVTCA/SPVTCA/SFVTCA/SPVFS/SFVFS/SFVTPV/SPVTL/SFVTL/SDPVTL), and the
+movement/query verbs MDAP, MIAP, MDRP, MIRP, ALIGNRP, ALIGNPTS, IP, IUP[xy],
+SHP, SHC, SHZ, SHPIX, MSIRP, UTP, GC, MD, SCFS, FLIPPT, FLIPRGON, FLIPRGOFF,
+INSTCTRL. **Deferred to Phase 8.5:** DELTAP1/2/3, DELTAC1/2/3 (per-ppem
+fine adjustments), ISECT (line intersection — rare), per-(face, ppem) cache
+(currently re-runs fpgm + prep on every render call), and a per-call
+interpreter snapshot for lock-free concurrent rendering.
 
 **Reactivated** after Phase 12 swap revealed that DIR.Lib's baseline
 images depended on FT's hinting. Without hinting, glyphs land at their

@@ -128,6 +128,20 @@ public readonly struct PaintRef
         return new PaintSolidData(paletteIdx, alpha);
     }
 
+    /// <summary>
+    /// Read a VarSolid (format 3) record. Layout is identical to Solid
+    /// plus a trailing uint32 varIndexBase. The caller applies the delta
+    /// via <see cref="ColrTable.GetVarDelta"/>.
+    /// </summary>
+    public (PaintSolidData Data, uint VarIndexBase) AsVarSolid()
+    {
+        var r = Reader(1);
+        var paletteIdx = r.ReadUInt16();
+        var alpha = r.ReadF2Dot14();
+        var varIndexBase = r.ReadUInt32();
+        return (new PaintSolidData(paletteIdx, alpha), varIndexBase);
+    }
+
     public PaintGlyphData AsGlyph()
     {
         var subPaint = ReadSubPaint(1);
@@ -161,6 +175,28 @@ public readonly struct PaintRef
         return new PaintTransformData(subPaint, new Matrix3x2(xx, yx, xy, yy, dx, dy));
     }
 
+    /// <summary>
+    /// Read a VarTransform (format 13) record. Layout: same as Transform (12)
+    /// with the Affine2x3 record carrying a trailing uint32 varIndexBase after
+    /// the 6 Fixed16.16 matrix components.
+    /// Fields (var indices): xx=base, yx=base+1, xy=base+2, yy=base+3, dx=base+4, dy=base+5.
+    /// </summary>
+    public (PaintTransformData Data, uint VarIndexBase) AsVarTransform()
+    {
+        var subPaint = ReadSubPaint(1);
+        var r = Reader(4);
+        var affineOff = ((uint)r.ReadByte() << 16) | ((uint)r.ReadByte() << 8) | r.ReadByte();
+        var ar = new BigEndianReader(Source.Span, Offset + (int)affineOff);
+        var xx = ar.ReadFixed1616();
+        var yx = ar.ReadFixed1616();
+        var xy = ar.ReadFixed1616();
+        var yy = ar.ReadFixed1616();
+        var dx = ar.ReadFixed1616();
+        var dy = ar.ReadFixed1616();
+        var varIndexBase = ar.ReadUInt32();
+        return (new PaintTransformData(subPaint, new Matrix3x2(xx, yx, xy, yy, dx, dy)), varIndexBase);
+    }
+
     public PaintTranslateData AsTranslate()
     {
         var subPaint = ReadSubPaint(1);
@@ -168,6 +204,20 @@ public readonly struct PaintRef
         var dx = r.ReadInt16();
         var dy = r.ReadInt16();
         return new PaintTranslateData(subPaint, dx, dy);
+    }
+
+    /// <summary>
+    /// Read a VarTranslate (format 15) record. Layout is identical to Translate
+    /// plus a trailing uint32 varIndexBase. Fields: dx=varIndexBase, dy=varIndexBase+1.
+    /// </summary>
+    public (PaintTranslateData Data, uint VarIndexBase) AsVarTranslate()
+    {
+        var subPaint = ReadSubPaint(1);
+        var r = Reader(4);
+        var dx = r.ReadInt16();
+        var dy = r.ReadInt16();
+        var varIndexBase = r.ReadUInt32();
+        return (new PaintTranslateData(subPaint, dx, dy), varIndexBase);
     }
 
     public PaintScaleData AsScale(bool aroundCenter, bool uniform)
@@ -192,6 +242,34 @@ public readonly struct PaintRef
         return new PaintScaleData(subPaint, sx, sy, cx, cy);
     }
 
+    /// <summary>
+    /// Read a Var scale record (formats 17/19/21/23). Layout is identical to
+    /// the non-Var counterpart plus a trailing uint32 varIndexBase.
+    /// Fields: sx=base, [sy=base+1], [cx=base+N, cy=base+N+1].
+    /// </summary>
+    public (PaintScaleData Data, uint VarIndexBase) AsVarScale(bool aroundCenter, bool uniform)
+    {
+        var subPaint = ReadSubPaint(1);
+        var r = Reader(4);
+        float sx, sy, cx = 0, cy = 0;
+        if (uniform)
+        {
+            sx = sy = r.ReadF2Dot14();
+        }
+        else
+        {
+            sx = r.ReadF2Dot14();
+            sy = r.ReadF2Dot14();
+        }
+        if (aroundCenter)
+        {
+            cx = r.ReadInt16();
+            cy = r.ReadInt16();
+        }
+        var varIndexBase = r.ReadUInt32();
+        return (new PaintScaleData(subPaint, sx, sy, cx, cy), varIndexBase);
+    }
+
     public PaintRotateData AsRotate(bool aroundCenter)
     {
         var subPaint = ReadSubPaint(1);
@@ -204,6 +282,26 @@ public readonly struct PaintRef
             cy = r.ReadInt16();
         }
         return new PaintRotateData(subPaint, angleTurns, cx, cy);
+    }
+
+    /// <summary>
+    /// Read a Var rotate record (formats 25/27). Layout is identical to the
+    /// non-Var counterpart plus a trailing uint32 varIndexBase.
+    /// Fields: angle=base, [cx=base+1, cy=base+2].
+    /// </summary>
+    public (PaintRotateData Data, uint VarIndexBase) AsVarRotate(bool aroundCenter)
+    {
+        var subPaint = ReadSubPaint(1);
+        var r = Reader(4);
+        var angleTurns = r.ReadF2Dot14();
+        float cx = 0, cy = 0;
+        if (aroundCenter)
+        {
+            cx = r.ReadInt16();
+            cy = r.ReadInt16();
+        }
+        var varIndexBase = r.ReadUInt32();
+        return (new PaintRotateData(subPaint, angleTurns, cx, cy), varIndexBase);
     }
 
     public PaintSkewData AsSkew(bool aroundCenter)
@@ -219,6 +317,27 @@ public readonly struct PaintRef
             cy = r.ReadInt16();
         }
         return new PaintSkewData(subPaint, xAngle, yAngle, cx, cy);
+    }
+
+    /// <summary>
+    /// Read a Var skew record (formats 29/31). Layout is identical to the
+    /// non-Var counterpart plus a trailing uint32 varIndexBase.
+    /// Fields: xAngle=base, yAngle=base+1, [cx=base+2, cy=base+3].
+    /// </summary>
+    public (PaintSkewData Data, uint VarIndexBase) AsVarSkew(bool aroundCenter)
+    {
+        var subPaint = ReadSubPaint(1);
+        var r = Reader(4);
+        var xAngle = r.ReadF2Dot14();
+        var yAngle = r.ReadF2Dot14();
+        float cx = 0, cy = 0;
+        if (aroundCenter)
+        {
+            cx = r.ReadInt16();
+            cy = r.ReadInt16();
+        }
+        var varIndexBase = r.ReadUInt32();
+        return (new PaintSkewData(subPaint, xAngle, yAngle, cx, cy), varIndexBase);
     }
 
     public PaintCompositeData AsComposite()
