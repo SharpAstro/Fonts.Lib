@@ -39,7 +39,9 @@ public class ColrDiagnostics
             if (opaqueCount > 0)
                 sb.AppendLine($"  size={bmp.Width}x{bmp.Height}, opaque={opaqueCount}, avgRGB=({rSum/opaqueCount},{gSum/opaqueCount},{bSum/opaqueCount})");
             // Save PNG
-            PngWriter.WriteRgba(System.IO.Path.Combine(AppContext.BaseDirectory, "PngDumps", $"diag_U+{cp:X5}.png"),
+            var pngDir = System.IO.Path.Combine(AppContext.BaseDirectory, "PngDumps");
+            Directory.CreateDirectory(pngDir);
+            PngWriter.WriteRgba(System.IO.Path.Combine(pngDir, $"diag_U+{cp:X5}.png"),
                 bmp.Pixels, bmp.Width, bmp.Height);
         }
         File.WriteAllText(System.IO.Path.Combine(AppContext.BaseDirectory, "bright_emoji_stats.txt"), sb.ToString());

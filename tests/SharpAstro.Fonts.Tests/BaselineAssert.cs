@@ -38,10 +38,11 @@ internal static class BaselineAssert
         // Output-tree mirror, populated by the csproj <Content> copy step.
         var outBaselinePath = Path.Combine(OutDir, "Baselines", name + ".bmp");
 
-        if (RegenAll || !File.Exists(srcBaselinePath))
+        var baselineExists = File.Exists(outBaselinePath) || File.Exists(srcBaselinePath);
+        if (RegenAll || !baselineExists)
         {
+            Directory.CreateDirectory(srcBaselineDir);
             BmpWriter.WriteGray8(srcBaselinePath, bmp.Alpha, bmp.Width, bmp.Height);
-            // Also drop into output so this run has something to compare next time.
             Directory.CreateDirectory(Path.GetDirectoryName(outBaselinePath)!);
             BmpWriter.WriteGray8(outBaselinePath, bmp.Alpha, bmp.Width, bmp.Height);
             throw new BaselineCreatedException(
