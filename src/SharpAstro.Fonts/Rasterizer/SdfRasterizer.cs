@@ -1,6 +1,6 @@
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Runtime.Intrinsics;
 using SharpAstro.Fonts.Outlines;
 
 namespace SharpAstro.Fonts.Rasterizer;
@@ -186,8 +186,9 @@ public static class SdfRasterizer
 
     /// <summary>
     /// Compute minimum squared distance and winding number for a single pixel
-    /// against all edges. Uses Vector128 (4 edges per iteration) when the edge
-    /// count is ≥ 4, with a scalar tail for the remainder.
+    /// against all edges. Uses <see cref="Vector{T}"/> (auto-scaling: 4 lanes
+    /// on ARM64/SSE2, 8 on AVX2, 16 on AVX-512) with a scalar tail for the
+    /// remainder.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void ComputePixel(
@@ -198,81 +199,81 @@ public static class SdfRasterizer
         minDistSq = float.MaxValue;
         winding = 0;
 
-        if (Vector128.IsHardwareAccelerated && n >= 4)
+        var lanes = Vector<float>.Count;
+        if (Vector.IsHardwareAccelerated && n >= lanes)
         {
-            var pcx4 = Vector128.Create(pcx);
-            var pcy4 = Vector128.Create(pcy);
-            var minDSq4 = Vector128.Create(float.MaxValue);
-            var winding4 = Vector128<int>.Zero;
-            var zero4 = Vector128<float>.Zero;
-            var one4 = Vector128.Create(1f);
-            var eps4 = Vector128.Create(1e-12f);
+            var pcxV = new Vector<float>(pcx);
+            var pcyV = new Vector<float>(pcy);
+            var minDSqV = new Vector<float>(float.MaxValue);
+            var windingV = Vector<int>.Zero;
+            var zeroF = Vector<float>.Zero;
+            var oneF = Vector<float>.One;
+            var epsV = new Vector<float>(1e-12f);
+            var oneI = Vector<int>.One;
 
             var i = 0;
-            for (; i + 3 < n; i += 4)
+            for (; i + lanes <= n; i += lanes)
             {
-                var ax4 = Vector128.LoadUnsafe(ref Unsafe.Add(ref xs, i));
-                var ay4 = Vector128.LoadUnsafe(ref Unsafe.Add(ref ys, i));
-                var bx4 = Vector128.LoadUnsafe(ref Unsafe.Add(ref xs1, i));
-                var by4 = Vector128.LoadUnsafe(ref Unsafe.Add(ref ys1, i));
+                var axV = new Vector<float>(
+                    MemoryMarshal.CreateReadOnlySpan(ref Unsafe.Add(ref xs, i), lanes));
+                var ayV = new Vector<float>(
+                    MemoryMarshal.CreateReadOnlySpan(ref Unsafe.Add(ref ys, i), lanes));
+                var bxV = new Vector<float>(
+                    MemoryMarshal.CreateReadOnlySpan(ref Unsafe.Add(ref xs1, i), lanes));
+                var byV = new Vector<float>(
+                    MemoryMarshal.CreateReadOnlySpan(ref Unsafe.Add(ref ys1, i), lanes));
 
                 // ── SegmentDistSq (vectorized) ──
-                var dx4 = bx4 - ax4;
-                var dy4 = by4 - ay4;
-                var lenSq4 = dx4 * dx4 + dy4 * dy4;
+                var dxV = bxV - axV;
+                var dyV = byV - ayV;
+                var lenSqV = dxV * dxV + dyV * dyV;
 
                 // t = clamp(dot(P-A, B-A) / lenSq, 0, 1)
-                var pax4 = pcx4 - ax4;
-                var pay4 = pcy4 - ay4;
-                var dot4 = pax4 * dx4 + pay4 * dy4;
+                var paxV = pcxV - axV;
+                var payV = pcyV - ayV;
+                var dotV = paxV * dxV + payV * dyV;
                 // Guard degenerate segments: if lenSq < eps, t = 0.
-                var invLen4 = Vector128.ConditionalSelect(
-                    Vector128.GreaterThan(lenSq4, eps4).AsSingle(),
-                    one4 / lenSq4,
-                    zero4);
-                var t4 = Vector128.Min(Vector128.Max(dot4 * invLen4, zero4), one4);
+                var nonDegenerate = Vector.GreaterThan(lenSqV, epsV);
+                var invLenV = Vector.ConditionalSelect(nonDegenerate, oneF / lenSqV, zeroF);
+                var tV = Vector.Min(Vector.Max(dotV * invLenV, zeroF), oneF);
 
-                var qx4 = ax4 + t4 * dx4 - pcx4;
-                var qy4 = ay4 + t4 * dy4 - pcy4;
-                var dSq4 = qx4 * qx4 + qy4 * qy4;
+                var qxV = axV + tV * dxV - pcxV;
+                var qyV = ayV + tV * dyV - pcyV;
+                var dSqV = qxV * qxV + qyV * qyV;
 
-                minDSq4 = Vector128.Min(minDSq4, dSq4);
+                minDSqV = Vector.Min(minDSqV, dSqV);
 
                 // ── WindingContribution (vectorized) ──
                 // isLeft = (bx-ax)*(py-ay) - (by-ay)*(px-ax)
-                var isLeft4 = (bx4 - ax4) * (pcy4 - ay4) - (by4 - ay4) * (pcx4 - ax4);
+                var isLeftV = dxV * (pcyV - ayV) - dyV * (pcxV - axV);
 
                 // Upward crossing: ay <= py && by > py && isLeft > 0 → +1
-                var ayLePy = Vector128.LessThanOrEqual(ay4, pcy4);
-                var byGtPy = Vector128.GreaterThan(by4, pcy4);
-                var leftPos = Vector128.GreaterThan(isLeft4, zero4);
+                var ayLePy = Vector.LessThanOrEqual(ayV, pcyV);
+                var byGtPy = Vector.GreaterThan(byV, pcyV);
+                var leftPos = Vector.GreaterThan(isLeftV, zeroF);
                 var upMask = ayLePy & byGtPy & leftPos;
 
                 // Downward crossing: ay > py && by <= py && isLeft < 0 → -1
-                var ayGtPy = Vector128.GreaterThan(ay4, pcy4);
-                var byLePy = Vector128.LessThanOrEqual(by4, pcy4);
-                var leftNeg = Vector128.LessThan(isLeft4, zero4);
+                var ayGtPy = Vector.GreaterThan(ayV, pcyV);
+                var byLePy = Vector.LessThanOrEqual(byV, pcyV);
+                var leftNeg = Vector.LessThan(isLeftV, zeroF);
                 var downMask = ayGtPy & byLePy & leftNeg;
 
                 // +1 for each upward, -1 for each downward.
-                var ones4 = Vector128.Create(1);
-                var contrib = Vector128.ConditionalSelect(upMask.AsInt32(), ones4, Vector128<int>.Zero)
-                            - Vector128.ConditionalSelect(downMask.AsInt32(), ones4, Vector128<int>.Zero);
-                winding4 += contrib;
+                // Vector comparison returns -1 (all bits set) for true lanes.
+                var upInt = Vector.AsVectorInt32(upMask) & oneI;
+                var downInt = Vector.AsVectorInt32(downMask) & oneI;
+                windingV += upInt - downInt;
             }
 
-            // Horizontal reduce: min across 4 lanes.
-            minDistSq = Vector128.Min(
-                Vector128.Min(
-                    Vector128.Shuffle(minDSq4, Vector128.Create(0, 0, 0, 0)),
-                    Vector128.Shuffle(minDSq4, Vector128.Create(1, 1, 1, 1))),
-                Vector128.Min(
-                    Vector128.Shuffle(minDSq4, Vector128.Create(2, 2, 2, 2)),
-                    Vector128.Shuffle(minDSq4, Vector128.Create(3, 3, 3, 3)))
-            ).ToScalar();
-
-            // Sum winding lanes.
-            winding = winding4[0] + winding4[1] + winding4[2] + winding4[3];
+            // Horizontal reduce: min across all lanes.
+            minDistSq = minDSqV[0];
+            winding = windingV[0];
+            for (var k = 1; k < lanes; k++)
+            {
+                if (minDSqV[k] < minDistSq) minDistSq = minDSqV[k];
+                winding += windingV[k];
+            }
 
             // Scalar tail for remaining edges.
             for (; i < n; i++)
