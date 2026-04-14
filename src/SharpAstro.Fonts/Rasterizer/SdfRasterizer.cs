@@ -22,7 +22,7 @@ namespace SharpAstro.Fonts.Rasterizer;
 ///
 /// <para>Stateless — every call allocates its own scratch. Thread-safe.</para>
 /// </summary>
-internal static class SdfRasterizer
+public static class SdfRasterizer
 {
     /// <summary>
     /// Rasterize the path produced by <paramref name="drawTo"/> into a
@@ -119,6 +119,85 @@ internal static class SdfRasterizer
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Rasterize the path produced by <paramref name="drawTo"/> into a signed
+    /// distance field, automatically computing the output dimensions from the
+    /// glyph outline bounds plus <paramref name="spread"/> padding.
+    /// </summary>
+    /// <returns>An <see cref="SdfBitmap"/> with Left/Top for glyph positioning.</returns>
+    public static SdfBitmap RasterizeAuto(
+        Action<IGlyphSink> drawTo,
+        float pixelsPerEm,
+        int unitsPerEm,
+        float spread = 4f)
+    {
+        if (drawTo is null || pixelsPerEm <= 0f || unitsPerEm <= 0 || spread <= 0f)
+            return SdfBitmap.Empty;
+
+        var scale = pixelsPerEm / (float)unitsPerEm;
+        var collector = new EdgeCollector(scale, 0f, 0f);
+        drawTo(collector);
+
+        if (collector.EdgeCount == 0) return SdfBitmap.Empty;
+
+        var pxMin = (int)MathF.Floor(collector.MinX);
+        var pyMin = (int)MathF.Floor(collector.MinY);
+        var pxMax = (int)MathF.Ceiling(collector.MaxX);
+        var pyMax = (int)MathF.Ceiling(collector.MaxY);
+
+        var pad = (int)MathF.Ceiling(spread);
+        var width = pxMax - pxMin + 2 * pad;
+        var height = pyMax - pyMin + 2 * pad;
+
+        if (width <= 0 || height <= 0) return SdfBitmap.Empty;
+
+        // Shift edges so glyph bbox starts at (pad, pad) in output buffer
+        collector.Offset(-pxMin + pad, -pyMin + pad);
+
+        var xs  = collector.X0;
+        var ys  = collector.Y0;
+        var xs1 = collector.X1;
+        var ys1 = collector.Y1;
+        var n   = collector.EdgeCount;
+
+        var floats = new float[width * height];
+        for (var py = 0; py < height; py++)
+        {
+            for (var px = 0; px < width; px++)
+            {
+                var pcx = px + 0.5f;
+                var pcy = py + 0.5f;
+
+                var minDistSq = float.MaxValue;
+                var winding   = 0;
+
+                for (var i = 0; i < n; i++)
+                {
+                    winding += WindingContribution(pcx, pcy, xs[i], ys[i], xs1[i], ys1[i]);
+                    var dSq = SegmentDistSq(pcx, pcy, xs[i], ys[i], xs1[i], ys1[i]);
+                    if (dSq < minDistSq) minDistSq = dSq;
+                }
+
+                var dist = MathF.Sqrt(minDistSq);
+                var sign = (winding != 0) ? -1f : 1f;
+                var normalised = sign * dist / spread;
+                if (normalised < -1f) normalised = -1f;
+                else if (normalised > 1f) normalised = 1f;
+
+                floats[py * width + px] = (1f - normalised) * 0.5f;
+            }
+        }
+
+        // Convert float SDF to byte (R8_Unorm-compatible)
+        var alpha = new byte[width * height];
+        for (var i = 0; i < floats.Length; i++)
+            alpha[i] = (byte)(floats[i] * 255f + 0.5f);
+
+        // Left = glyph bbox left in pixel coords minus spread padding
+        // Top = pixels above baseline to top of bitmap (Y-flipped)
+        return new SdfBitmap(alpha, width, height, pxMin - pad, -(pyMin - pad), spread);
     }
 
     // ── Geometry helpers ──────────────────────────────────────────────────────

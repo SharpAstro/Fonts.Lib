@@ -358,6 +358,17 @@ public sealed class OpenTypeFont
     }
 
     /// <summary>
+    /// Rasterize a glyph as a signed distance field. The SDF is computed from
+    /// the unhinted outline at <paramref name="pixelsPerEm"/> with the given
+    /// <paramref name="spread"/>. Returns <see cref="SdfBitmap.Empty"/> when
+    /// the outline is empty.
+    /// </summary>
+    public SdfBitmap RenderSdf(uint glyphId, float pixelsPerEm, float spread = 4f)
+        => SdfRasterizer.RasterizeAuto(
+            sink => DrawGlyph(glyphId, sink),
+            pixelsPerEm, UnitsPerEm, spread);
+
+    /// <summary>
     /// Render a color glyph to an RGBA bitmap. Tries COLR v0/v1 first
     /// (vector + paint tree), then falls back to CBDT (PNG bitmap strikes).
     /// Returns null if this font / glyph has no color data — caller should
