@@ -1,16 +1,14 @@
 # SharpAstro.Fonts
 
 A pure-managed, MIT-licensed C# library for loading and rendering OpenType /
-TrueType fonts. Designed to replace the native FreeType2 dependency for
-[DIR.Lib](https://github.com/SharpAstro/DIR.Lib) and related projects.
+TrueType fonts.
 
 ## Status
 
-**All phases complete.** The library has full feature parity with the FreeType
-subset used by DIR.Lib, including TrueType hinting, CFF outlines, COLR v0/v1
-color glyphs, bitmap emoji, variable fonts, and PostScript Type 1.
-155 tests passing across outline, rasterizer, color, hinting, variation, and
-CJK baseline suites.
+**All phases complete.** TrueType hinting, CFF outlines, COLR v0/v1 color
+glyphs, bitmap emoji, variable fonts, PostScript Type 1, WOFF/WOFF2, and
+CJK variation selectors. 155 tests passing across outline, rasterizer, color,
+hinting, variation, and CJK baseline suites.
 
 ## Goals
 
@@ -19,7 +17,8 @@ CJK baseline suites.
   state, lock-free hinting snapshot cache).
 - MIT-licensed end to end. No code is copied from FreeType, SixLabors.Fonts,
   HarfBuzz, or other non-MIT sources.
-- Feature parity with the FreeType subset that DIR.Lib actually exercises.
+- Feature parity with the FreeType subset needed for PDF rendering and
+  UI text.
 
 ## Supported formats
 
