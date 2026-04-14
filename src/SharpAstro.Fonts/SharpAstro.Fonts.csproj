@@ -1,13 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>SharpAstro.Fonts</RootNamespace>
     <AssemblyName>SharpAstro.Fonts</AssemblyName>
     <PackageId>SharpAstro.Fonts</PackageId>
     <Description>Pure-managed, MIT-licensed C# OpenType / TrueType font loader and rasterizer.</Description>
     <IsAotCompatible>true</IsAotCompatible>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
-    <VersionPrefix>0.1.0-alpha</VersionPrefix>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/SharpAstro/Fonts.Lib.git</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,6 +22,11 @@
   <ItemGroup>
     <!-- PNG decode for CBDT/sbix bitmap glyphs (MIT). -->
     <PackageReference Include="StbImageSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 
 </Project>
