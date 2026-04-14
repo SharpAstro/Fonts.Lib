@@ -63,6 +63,13 @@ public sealed class Outline
     /// <summary>Inclusive end indices for each contour.</summary>
     public ReadOnlySpan<int> ContourEnds => _contourEnds;
 
+    /// <summary>Internal access to the backing flags array for zero-copy reuse
+    /// in variation / hinting pipelines that do not modify flags.</summary>
+    internal byte[] FlagsArray => _flags;
+    /// <summary>Internal access to the backing contour-ends array for zero-copy
+    /// reuse in variation / hinting pipelines that do not modify contour ends.</summary>
+    internal int[] ContourEndsArray => _contourEnds;
+
     public bool IsOnCurve(int pointIndex) => (_flags[pointIndex] & 1) != 0;
 
     public OutlinePoint GetPoint(int pointIndex)

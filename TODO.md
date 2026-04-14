@@ -101,6 +101,16 @@ Likely candidates:
 - **PNG decode** in CBDT — `StbImageSharp.ImageResult.FromMemory`
   takes `byte[]` (not `ReadOnlySpan<byte>`); we currently `.ToArray()`
   the slice. Investigate whether StbImageSharp has a span overload.
+- **CFF `DrawGlyph` sink allocation** —
+  `Type2CharstringInterpreter` emits into an `IGlyphSink` that
+  allocates 4,216 B per call (internal `List<>`). Pool or pre-size the
+  backing list based on charstring hints. (Benchmark: 335 ns + 4.2 KB
+  per CFF glyph vs 457 ns + 456 B for TrueType.)
+- **COLR v1 `RenderColor` at large sizes** — 1.35 ms / 1.68 MB at
+  128px. Per-layer rasterization allocates a full bitmap per paint
+  layer. Consider a shared canvas with compositing-in-place to reduce
+  allocation and rasterization passes. (Benchmark: 5× slower and 10×
+  heavier than CBDT PNG decode at the same size.)
 
 None of these are blocking — the immutable / lock-free design is the
 non-negotiable invariant; performance is a knob to turn after.

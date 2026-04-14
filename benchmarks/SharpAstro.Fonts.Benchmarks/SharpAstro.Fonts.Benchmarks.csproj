@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SharpAstro.Fonts.Benchmarks</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- BenchmarkDotNet requires Release for meaningful numbers. -->
+    <NoWarn>$(NoWarn);CA1707;CA1812</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SharpAstro.Fonts\SharpAstro.Fonts.csproj" />
+  </ItemGroup>
+
+  <!-- Reuse the test fixture fonts (linked, not copied). -->
+  <ItemGroup>
+    <Content Include="..\..\tests\SharpAstro.Fonts.Tests\Fixtures\**"
+             Link="Fixtures\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -11,6 +11,8 @@
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <!-- Phase 6: PNG decode for CBDT/sbix -->
     <PackageVersion Include="StbImageSharp" Version="2.30.15" />
+    <!-- Benchmarks -->
+    <PackageVersion Include="BenchmarkDotNet" Version="0.14.0" />
   </ItemGroup>
 
 </Project>

@@ -1,3 +1,6 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using SharpAstro.Fonts.Outlines;
 
 namespace SharpAstro.Fonts.Rasterizer;
@@ -21,6 +24,9 @@ namespace SharpAstro.Fonts.Rasterizer;
 /// </para>
 ///
 /// <para>Stateless — every call allocates its own scratch. Thread-safe.</para>
+///
+/// <para>The inner edge loop is SIMD-vectorized (Vector128&lt;float&gt;,
+/// 4 edges per iteration) for both distance and winding computation.</para>
 /// </summary>
 public static class SdfRasterizer
 {
@@ -64,10 +70,6 @@ public static class SdfRasterizer
 
         if (collector.EdgeCount == 0) return [];
 
-        var xs  = collector.X0;
-        var ys  = collector.Y0;
-        var xs1 = collector.X1;
-        var ys1 = collector.Y1;
         var n   = collector.EdgeCount;
 
         // Shift so that the glyph sits inside the requested buffer the same
@@ -78,6 +80,11 @@ public static class SdfRasterizer
 
         var result = new float[width * height];
 
+        ref var xs0  = ref MemoryMarshal.GetReference(collector.X0);
+        ref var ys0  = ref MemoryMarshal.GetReference(collector.Y0);
+        ref var xs10 = ref MemoryMarshal.GetReference(collector.X1);
+        ref var ys10 = ref MemoryMarshal.GetReference(collector.Y1);
+
         for (var py = 0; py < height; py++)
         {
             for (var px = 0; px < width; px++)
@@ -86,23 +93,8 @@ public static class SdfRasterizer
                 var pcx = px + 0.5f;
                 var pcy = py + 0.5f;
 
-                var minDistSq = float.MaxValue;
-                var winding   = 0;
-
-                for (var i = 0; i < n; i++)
-                {
-                    var ax = xs[i];
-                    var ay = ys[i];
-                    var bx = xs1[i];
-                    var by = ys1[i];
-
-                    // Signed distance contribution (winding).
-                    winding += WindingContribution(pcx, pcy, ax, ay, bx, by);
-
-                    // Squared distance from pixel centre to segment.
-                    var dSq = SegmentDistSq(pcx, pcy, ax, ay, bx, by);
-                    if (dSq < minDistSq) minDistSq = dSq;
-                }
+                ComputePixel(ref xs0, ref ys0, ref xs10, ref ys10, n, pcx, pcy,
+                    out var minDistSq, out var winding);
 
                 // Convert to signed distance (negative = inside).
                 var dist = MathF.Sqrt(minDistSq);
@@ -156,13 +148,15 @@ public static class SdfRasterizer
         // Shift edges so glyph bbox starts at (pad, pad) in output buffer
         collector.Offset(-pxMin + pad, -pyMin + pad);
 
-        var xs  = collector.X0;
-        var ys  = collector.Y0;
-        var xs1 = collector.X1;
-        var ys1 = collector.Y1;
         var n   = collector.EdgeCount;
 
-        var floats = new float[width * height];
+        ref var xs0  = ref MemoryMarshal.GetReference(collector.X0);
+        ref var ys0  = ref MemoryMarshal.GetReference(collector.Y0);
+        ref var xs10 = ref MemoryMarshal.GetReference(collector.X1);
+        ref var ys10 = ref MemoryMarshal.GetReference(collector.Y1);
+
+        // Write byte[] directly — no intermediate float[] buffer.
+        var alpha = new byte[width * height];
         for (var py = 0; py < height; py++)
         {
             for (var px = 0; px < width; px++)
@@ -170,15 +164,8 @@ public static class SdfRasterizer
                 var pcx = px + 0.5f;
                 var pcy = py + 0.5f;
 
-                var minDistSq = float.MaxValue;
-                var winding   = 0;
-
-                for (var i = 0; i < n; i++)
-                {
-                    winding += WindingContribution(pcx, pcy, xs[i], ys[i], xs1[i], ys1[i]);
-                    var dSq = SegmentDistSq(pcx, pcy, xs[i], ys[i], xs1[i], ys1[i]);
-                    if (dSq < minDistSq) minDistSq = dSq;
-                }
+                ComputePixel(ref xs0, ref ys0, ref xs10, ref ys10, n, pcx, pcy,
+                    out var minDistSq, out var winding);
 
                 var dist = MathF.Sqrt(minDistSq);
                 var sign = (winding != 0) ? -1f : 1f;
@@ -186,18 +173,135 @@ public static class SdfRasterizer
                 if (normalised < -1f) normalised = -1f;
                 else if (normalised > 1f) normalised = 1f;
 
-                floats[py * width + px] = (1f - normalised) * 0.5f;
+                alpha[py * width + px] = (byte)((1f - normalised) * 0.5f * 255f + 0.5f);
             }
         }
-
-        // Convert float SDF to byte (R8_Unorm-compatible)
-        var alpha = new byte[width * height];
-        for (var i = 0; i < floats.Length; i++)
-            alpha[i] = (byte)(floats[i] * 255f + 0.5f);
 
         // Left = glyph bbox left in pixel coords minus spread padding
         // Top = pixels above baseline to top of bitmap (Y-flipped)
         return new SdfBitmap(alpha, width, height, pxMin - pad, -(pyMin - pad), spread);
+    }
+
+    // ── SIMD pixel computation ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Compute minimum squared distance and winding number for a single pixel
+    /// against all edges. Uses Vector128 (4 edges per iteration) when the edge
+    /// count is ≥ 4, with a scalar tail for the remainder.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ComputePixel(
+        ref float xs, ref float ys, ref float xs1, ref float ys1,
+        int n, float pcx, float pcy,
+        out float minDistSq, out int winding)
+    {
+        minDistSq = float.MaxValue;
+        winding = 0;
+
+        if (Vector128.IsHardwareAccelerated && n >= 4)
+        {
+            var pcx4 = Vector128.Create(pcx);
+            var pcy4 = Vector128.Create(pcy);
+            var minDSq4 = Vector128.Create(float.MaxValue);
+            var winding4 = Vector128<int>.Zero;
+            var zero4 = Vector128<float>.Zero;
+            var one4 = Vector128.Create(1f);
+            var eps4 = Vector128.Create(1e-12f);
+
+            var i = 0;
+            for (; i + 3 < n; i += 4)
+            {
+                var ax4 = Vector128.LoadUnsafe(ref Unsafe.Add(ref xs, i));
+                var ay4 = Vector128.LoadUnsafe(ref Unsafe.Add(ref ys, i));
+                var bx4 = Vector128.LoadUnsafe(ref Unsafe.Add(ref xs1, i));
+                var by4 = Vector128.LoadUnsafe(ref Unsafe.Add(ref ys1, i));
+
+                // ── SegmentDistSq (vectorized) ──
+                var dx4 = bx4 - ax4;
+                var dy4 = by4 - ay4;
+                var lenSq4 = dx4 * dx4 + dy4 * dy4;
+
+                // t = clamp(dot(P-A, B-A) / lenSq, 0, 1)
+                var pax4 = pcx4 - ax4;
+                var pay4 = pcy4 - ay4;
+                var dot4 = pax4 * dx4 + pay4 * dy4;
+                // Guard degenerate segments: if lenSq < eps, t = 0.
+                var invLen4 = Vector128.ConditionalSelect(
+                    Vector128.GreaterThan(lenSq4, eps4).AsSingle(),
+                    one4 / lenSq4,
+                    zero4);
+                var t4 = Vector128.Min(Vector128.Max(dot4 * invLen4, zero4), one4);
+
+                var qx4 = ax4 + t4 * dx4 - pcx4;
+                var qy4 = ay4 + t4 * dy4 - pcy4;
+                var dSq4 = qx4 * qx4 + qy4 * qy4;
+
+                minDSq4 = Vector128.Min(minDSq4, dSq4);
+
+                // ── WindingContribution (vectorized) ──
+                // isLeft = (bx-ax)*(py-ay) - (by-ay)*(px-ax)
+                var isLeft4 = (bx4 - ax4) * (pcy4 - ay4) - (by4 - ay4) * (pcx4 - ax4);
+
+                // Upward crossing: ay <= py && by > py && isLeft > 0 → +1
+                var ayLePy = Vector128.LessThanOrEqual(ay4, pcy4);
+                var byGtPy = Vector128.GreaterThan(by4, pcy4);
+                var leftPos = Vector128.GreaterThan(isLeft4, zero4);
+                var upMask = ayLePy & byGtPy & leftPos;
+
+                // Downward crossing: ay > py && by <= py && isLeft < 0 → -1
+                var ayGtPy = Vector128.GreaterThan(ay4, pcy4);
+                var byLePy = Vector128.LessThanOrEqual(by4, pcy4);
+                var leftNeg = Vector128.LessThan(isLeft4, zero4);
+                var downMask = ayGtPy & byLePy & leftNeg;
+
+                // +1 for each upward, -1 for each downward.
+                var ones4 = Vector128.Create(1);
+                var contrib = Vector128.ConditionalSelect(upMask.AsInt32(), ones4, Vector128<int>.Zero)
+                            - Vector128.ConditionalSelect(downMask.AsInt32(), ones4, Vector128<int>.Zero);
+                winding4 += contrib;
+            }
+
+            // Horizontal reduce: min across 4 lanes.
+            minDistSq = Vector128.Min(
+                Vector128.Min(
+                    Vector128.Shuffle(minDSq4, Vector128.Create(0, 0, 0, 0)),
+                    Vector128.Shuffle(minDSq4, Vector128.Create(1, 1, 1, 1))),
+                Vector128.Min(
+                    Vector128.Shuffle(minDSq4, Vector128.Create(2, 2, 2, 2)),
+                    Vector128.Shuffle(minDSq4, Vector128.Create(3, 3, 3, 3)))
+            ).ToScalar();
+
+            // Sum winding lanes.
+            winding = winding4[0] + winding4[1] + winding4[2] + winding4[3];
+
+            // Scalar tail for remaining edges.
+            for (; i < n; i++)
+            {
+                var ax = Unsafe.Add(ref xs, i);
+                var ay = Unsafe.Add(ref ys, i);
+                var bx = Unsafe.Add(ref xs1, i);
+                var by = Unsafe.Add(ref ys1, i);
+
+                winding += WindingContribution(pcx, pcy, ax, ay, bx, by);
+                var dSq = SegmentDistSq(pcx, pcy, ax, ay, bx, by);
+                if (dSq < minDistSq) minDistSq = dSq;
+            }
+        }
+        else
+        {
+            // Scalar fallback.
+            for (var i = 0; i < n; i++)
+            {
+                var ax = Unsafe.Add(ref xs, i);
+                var ay = Unsafe.Add(ref ys, i);
+                var bx = Unsafe.Add(ref xs1, i);
+                var by = Unsafe.Add(ref ys1, i);
+
+                winding += WindingContribution(pcx, pcy, ax, ay, bx, by);
+                var dSq = SegmentDistSq(pcx, pcy, ax, ay, bx, by);
+                if (dSq < minDistSq) minDistSq = dSq;
+            }
+        }
     }
 
     // ── Geometry helpers ──────────────────────────────────────────────────────
@@ -206,6 +310,7 @@ public static class SdfRasterizer
     /// Returns the squared distance from point P to the closest point on the
     /// line segment AB.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float SegmentDistSq(
         float px, float py,
         float ax, float ay,
@@ -240,6 +345,7 @@ public static class SdfRasterizer
     /// does not cross the ray. Matches the non-zero fill-rule convention used
     /// by <see cref="SmoothRasterizer"/>.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int WindingContribution(
         float px, float py,
         float ax, float ay,
@@ -271,6 +377,7 @@ public static class SdfRasterizer
     /// 2-D cross product of vectors AB and AP.
     /// Positive → P is to the left of the directed line A→B.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float IsLeft(
         float ax, float ay,
         float bx, float by,

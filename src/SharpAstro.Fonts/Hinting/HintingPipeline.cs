@@ -69,10 +69,13 @@ internal static class HintingPipeline
         zone.OrgY[n + 2] = zone.CurY[n + 2] = interp.ScaleFunitsToPx(pp3yFu);
         zone.OrgY[n + 3] = zone.CurY[n + 3] = interp.ScaleFunitsToPx(pp4yFu);
 
+        // Compute once — reused for both the interpreter and the output.
+        var ends = outline.ContourEndsArray;
+
         var instructions = outline.Instructions;
         if (instructions is { Length: > 0 })
         {
-            interp.SetGlyphContours(outline.ContourEnds.ToArray());
+            interp.SetGlyphContours(ends);
             interp.RunGlyphProgram(instructions, zone);
             interp.SetGlyphContours(null);
         }
@@ -86,7 +89,6 @@ internal static class HintingPipeline
         for (var i = 0; i < n; i++)
             hf[i] = (byte)(zone.Flags[i] & Zone.FlagOnCurve);
 
-        var ends = outline.ContourEnds.ToArray();
         return new HintedOutline(hx, hy, hf, ends);
     }
 

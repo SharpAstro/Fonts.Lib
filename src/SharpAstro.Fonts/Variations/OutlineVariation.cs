@@ -1,3 +1,4 @@
+using System.Buffers;
 using SharpAstro.Fonts.Outlines;
 using SharpAstro.Fonts.Tables.Gvar;
 
@@ -9,8 +10,9 @@ namespace SharpAstro.Fonts.Variations;
 /// Untouched Points) per the OpenType spec for the case where only a
 /// subset of the glyph's points are explicitly affected by a tuple.
 ///
-/// <para>Stateless / per-call. Allocation per glyph: two float[] for the
-/// running deltas + the resulting <see cref="Outline"/>.</para>
+/// <para>Stateless / per-call. Scratch arrays are rented from
+/// <see cref="ArrayPool{T}"/> and returned after use. The only
+/// per-call allocation is the resulting <see cref="Outline"/>.</para>
 /// </summary>
 internal static class OutlineVariation
 {
@@ -28,89 +30,104 @@ internal static class OutlineVariation
         var tuples = gvar.LoadGlyphTuples(glyphId, pointCount);
         if (tuples.Count == 0) return outline;
 
-        // Accumulated delta buffers (float for sub-unit accuracy during blend).
-        var deltaX = new float[pointCount];
-        var deltaY = new float[pointCount];
-        var touched = new bool[pointCount];
-
-        // Running scratch for IUP per-tuple.
-        var tupleDx = new float[pointCount];
-        var tupleDy = new float[pointCount];
-        var tupleTouched = new bool[pointCount];
-
-        foreach (var t in tuples)
+        // Rent scratch buffers from the pool instead of allocating.
+        var deltaX = ArrayPool<float>.Shared.Rent(pointCount);
+        var deltaY = ArrayPool<float>.Shared.Rent(pointCount);
+        var touched = ArrayPool<bool>.Shared.Rent(pointCount);
+        var tupleDx = ArrayPool<float>.Shared.Rent(pointCount);
+        var tupleDy = ArrayPool<float>.Shared.Rent(pointCount);
+        var tupleTouched = ArrayPool<bool>.Shared.Rent(pointCount);
+        try
         {
-            var s = t.ComputeScalar(normalizedCoords);
-            if (s == 0) continue;
+            // Rented arrays may contain stale data — clear the slices we use.
+            Array.Clear(deltaX, 0, pointCount);
+            Array.Clear(deltaY, 0, pointCount);
+            Array.Clear(touched, 0, pointCount);
 
-            Array.Clear(tupleDx);
-            Array.Clear(tupleDy);
-            Array.Clear(tupleTouched);
+            foreach (var t in tuples)
+            {
+                var s = t.ComputeScalar(normalizedCoords);
+                if (s == 0) continue;
 
-            // Scatter explicit deltas (stop at pointCount — phantoms ignored).
-            if (t.PointNumbers is null)
-            {
-                // All-points tuple. The arrays may also include 4 phantom
-                // points after the outline points; just take the first
-                // pointCount entries.
-                var n = Math.Min(pointCount, t.DeltaX.Length);
-                for (var i = 0; i < n; i++)
+                Array.Clear(tupleDx, 0, pointCount);
+                Array.Clear(tupleDy, 0, pointCount);
+                Array.Clear(tupleTouched, 0, pointCount);
+
+                // Scatter explicit deltas (stop at pointCount — phantoms ignored).
+                if (t.PointNumbers is null)
                 {
-                    tupleDx[i] = t.DeltaX[i];
-                    tupleDy[i] = t.DeltaY[i];
-                    tupleTouched[i] = true;
-                }
-            }
-            else
-            {
-                var n = Math.Min(t.PointNumbers.Length, t.DeltaX.Length);
-                for (var i = 0; i < n; i++)
-                {
-                    var p = t.PointNumbers[i];
-                    if ((uint)p < (uint)pointCount)
+                    // All-points tuple. The arrays may also include 4 phantom
+                    // points after the outline points; just take the first
+                    // pointCount entries.
+                    var n = Math.Min(pointCount, t.DeltaX.Length);
+                    for (var i = 0; i < n; i++)
                     {
-                        tupleDx[p] = t.DeltaX[i];
-                        tupleDy[p] = t.DeltaY[i];
-                        tupleTouched[p] = true;
+                        tupleDx[i] = t.DeltaX[i];
+                        tupleDy[i] = t.DeltaY[i];
+                        tupleTouched[i] = true;
                     }
                 }
-                // IUP for untouched points.
-                ApplyIup(outline, tupleDx, tupleDy, tupleTouched);
+                else
+                {
+                    var n = Math.Min(t.PointNumbers.Length, t.DeltaX.Length);
+                    for (var i = 0; i < n; i++)
+                    {
+                        var p = t.PointNumbers[i];
+                        if ((uint)p < (uint)pointCount)
+                        {
+                            tupleDx[p] = t.DeltaX[i];
+                            tupleDy[p] = t.DeltaY[i];
+                            tupleTouched[p] = true;
+                        }
+                    }
+                    // IUP for untouched points.
+                    ApplyIup(outline, tupleDx, tupleDy, tupleTouched);
+                }
+
+                // Accumulate scaled into the running delta.
+                for (var i = 0; i < pointCount; i++)
+                {
+                    deltaX[i] += s * tupleDx[i];
+                    deltaY[i] += s * tupleDy[i];
+                    if (tupleTouched[i]) touched[i] = true;
+                }
             }
 
-            // Accumulate scaled into the running delta.
+            // Build new outline with rounded short coords.
+            var srcX = outline.X;
+            var srcY = outline.Y;
+            var newX = new short[pointCount];
+            var newY = new short[pointCount];
             for (var i = 0; i < pointCount; i++)
             {
-                deltaX[i] += s * tupleDx[i];
-                deltaY[i] += s * tupleDy[i];
-                if (tupleTouched[i]) touched[i] = true;
+                newX[i] = ClampShort(srcX[i] + deltaX[i]);
+                newY[i] = ClampShort(srcY[i] + deltaY[i]);
             }
+            // Rough updated bbox: scan the new points (cheaper than rerunning
+            // bezier flatten, conservative enough for the rasterizer's bbox path).
+            short xMin = short.MaxValue, yMin = short.MaxValue;
+            short xMax = short.MinValue, yMax = short.MinValue;
+            for (var i = 0; i < pointCount; i++)
+            {
+                if (newX[i] < xMin) xMin = newX[i];
+                if (newX[i] > xMax) xMax = newX[i];
+                if (newY[i] < yMin) yMin = newY[i];
+                if (newY[i] > yMax) yMax = newY[i];
+            }
+            // Variation does not modify flags or contour ends — share the
+            // original backing arrays to avoid .ToArray() copies.
+            return new Outline(newX, newY, outline.FlagsArray, outline.ContourEndsArray,
+                (xMin, yMin, xMax, yMax));
         }
-
-        // Build new outline with rounded short coords.
-        var srcX = outline.X;
-        var srcY = outline.Y;
-        var newX = new short[pointCount];
-        var newY = new short[pointCount];
-        var newFlags = outline.Flags.ToArray();
-        for (var i = 0; i < pointCount; i++)
+        finally
         {
-            newX[i] = ClampShort(srcX[i] + deltaX[i]);
-            newY[i] = ClampShort(srcY[i] + deltaY[i]);
+            ArrayPool<float>.Shared.Return(deltaX);
+            ArrayPool<float>.Shared.Return(deltaY);
+            ArrayPool<bool>.Shared.Return(touched);
+            ArrayPool<float>.Shared.Return(tupleDx);
+            ArrayPool<float>.Shared.Return(tupleDy);
+            ArrayPool<bool>.Shared.Return(tupleTouched);
         }
-        // Rough updated bbox: scan the new points (cheaper than rerunning
-        // bezier flatten, conservative enough for the rasterizer's bbox path).
-        short xMin = short.MaxValue, yMin = short.MaxValue;
-        short xMax = short.MinValue, yMax = short.MinValue;
-        for (var i = 0; i < pointCount; i++)
-        {
-            if (newX[i] < xMin) xMin = newX[i];
-            if (newX[i] > xMax) xMax = newX[i];
-            if (newY[i] < yMin) yMin = newY[i];
-            if (newY[i] > yMax) yMax = newY[i];
-        }
-        var newEnds = outline.ContourEnds.ToArray();
-        return new Outline(newX, newY, newFlags, newEnds, (xMin, yMin, xMax, yMax));
     }
 
     /// <summary>

@@ -115,7 +115,7 @@ internal sealed class Interpreter
     public void RunFpgm(byte[] fpgm)
     {
         if (fpgm.Length == 0) return;
-        Execute(fpgm);
+        Execute(fpgm, 0, fpgm.Length);
     }
 
     /// <summary>Re-scale CVT to <paramref name="ppem"/>, then run prep.</summary>
@@ -129,7 +129,7 @@ internal sealed class Interpreter
                 _cvt[i] = ScaleFunits(_cvtFunits[i]);
         // Reset graphics state to defaults (per spec) before prep.
         _gs = GraphicsState.Default;
-        if (prep.Length > 0) Execute(prep);
+        if (prep.Length > 0) Execute(prep, 0, prep.Length);
     }
 
     /// <summary>
@@ -143,7 +143,7 @@ internal sealed class Interpreter
         // Each glyph starts with default GS (per spec).
         _gs = GraphicsState.Default;
         _inGlyphProgram = true;
-        Execute(instructions);
+        Execute(instructions, 0, instructions.Length);
         _inGlyphProgram = false;
     }
 
@@ -167,7 +167,7 @@ internal sealed class Interpreter
 
     // ---- Dispatch loop ---------------------------------------------------
 
-    private void Execute(byte[] code)
+    private void Execute(byte[] code, int start, int length)
     {
         // FreeType-style underflow handling (ttinterp.c §TT_RunIns):
         // before each opcode dispatches, if the stack lacks enough args for
@@ -175,8 +175,9 @@ internal sealed class Interpreter
         // zeros instead of throwing. This is FT's non-pedantic default.
         // Per-instruction range checks (e.g. MINDEX with k > sp) silently
         // no-op — also matches FT.
-        var ip = 0;
-        while (ip < code.Length)
+        var ip = start;
+        var end = start + length;
+        while (ip < end)
         {
             var op = code[ip++];
             var pop = PopPushCount.Pop(op);
@@ -404,9 +405,7 @@ internal sealed class Interpreter
                 if ((uint)fid < (uint)_functions.Length && _functions[fid].Code is not null)
                 {
                     var f = _functions[fid];
-                    var body = new byte[f.Length];
-                    Array.Copy(f.Code!, f.Start, body, 0, f.Length);
-                    Execute(body);
+                    Execute(f.Code!, f.Start, f.Length);
                 }
                 break;
             }
@@ -417,9 +416,7 @@ internal sealed class Interpreter
                 if ((uint)fid < (uint)_functions.Length && _functions[fid].Code is not null)
                 {
                     var f = _functions[fid];
-                    var body = new byte[f.Length];
-                    Array.Copy(f.Code!, f.Start, body, 0, f.Length);
-                    for (var i = 0; i < n; i++) Execute(body);
+                    for (var i = 0; i < n; i++) Execute(f.Code!, f.Start, f.Length);
                 }
                 break;
             }

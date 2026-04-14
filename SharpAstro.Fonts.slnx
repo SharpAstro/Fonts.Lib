@@ -5,4 +5,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/SharpAstro.Fonts.Tests/SharpAstro.Fonts.Tests.csproj" />
   </Folder>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/SharpAstro.Fonts.Benchmarks/SharpAstro.Fonts.Benchmarks.csproj" />
+  </Folder>
 </Solution>
