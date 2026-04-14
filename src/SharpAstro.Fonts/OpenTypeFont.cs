@@ -17,6 +17,14 @@ using SharpAstro.Fonts.Tables.Glyf;
 using SharpAstro.Fonts.Tables.Head;
 using SharpAstro.Fonts.Tables.Hhea;
 using SharpAstro.Fonts.Tables.Hmtx;
+using SharpAstro.Fonts.Tables.Gpos;
+using SharpAstro.Fonts.Tables.Hvar;
+using SharpAstro.Fonts.Tables.Vhea;
+using SharpAstro.Fonts.Tables.Vmtx;
+using SharpAstro.Fonts.Tables.Kern;
+using GposTable = SharpAstro.Fonts.Tables.Gpos.GposTable;
+using HvarTable = SharpAstro.Fonts.Tables.Hvar.HvarTable;
+using KernTable = SharpAstro.Fonts.Tables.Kern.KernTable;
 using SharpAstro.Fonts.Tables.Loca;
 using SharpAstro.Fonts.Tables.Maxp;
 using SharpAstro.Fonts.Tables.Sfnt;
@@ -46,6 +54,8 @@ public sealed class OpenTypeFont
     public CmapTable Cmap { get; }
     public HheaTable? Hhea { get; }
     public HmtxTable? Hmtx { get; }
+    public VheaTable? Vhea { get; }
+    public VmtxTable? Vmtx { get; }
     public LocaTable? Loca { get; }
     public GlyfTable? Glyf { get; }
     internal CffTable? Cff { get; }
@@ -56,6 +66,13 @@ public sealed class OpenTypeFont
     public FvarTable? Fvar { get; }
     public AvarTable? Avar { get; }
     public GvarTable? Gvar { get; }
+    internal HvarTable? Hvar { get; }
+    internal KernTable? Kern { get; }
+    internal GposTable? Gpos { get; }
+
+    /// <summary>Normalized axis coordinates for the current variation instance.
+    /// Empty for non-variable fonts; all-zeros for the default instance.</summary>
+    internal ReadOnlySpan<float> NormalizedCoords => _normalizedCoords;
 
     /// <summary>'cvt ' Control Value Table (FUnit values used by hinting).</summary>
     internal ushort[]? CvtFunits { get; }
@@ -66,6 +83,11 @@ public sealed class OpenTypeFont
 
     /// <summary>True if this font ships hinting bytecode (cvt/fpgm/prep present).</summary>
     public bool HasHinting => Fpgm is not null || Prep is not null;
+
+    /// <summary>Per-(ppem) cache of post-fpgm+prep interpreter snapshots.
+    /// Lock-free; concurrent readers get a consistent snapshot per ppem.</summary>
+    internal readonly System.Collections.Concurrent.ConcurrentDictionary<float, Hinting.HintingSnapshot>
+        HintingSnapshots = new();
 
     /// <summary>True if this font carries COLR + CPAL color glyph data.</summary>
     public bool HasColorGlyphs => Colr is not null && Cpal is not null;
@@ -91,8 +113,10 @@ public sealed class OpenTypeFont
         CffTable? cff, ColrTable? colr, CpalTable? cpal,
         CblcTable? cblc, CbdtTable? cbdt,
         FvarTable? fvar, AvarTable? avar, GvarTable? gvar,
+        HvarTable? hvar, KernTable? kern, GposTable? gpos,
         ushort[]? cvtFunits, byte[]? fpgm, byte[]? prep,
-        float[] normalizedCoords)
+        float[] normalizedCoords,
+        VheaTable? vhea, VmtxTable? vmtx)
     {
         Directory = directory;
         Head = head;
@@ -100,6 +124,8 @@ public sealed class OpenTypeFont
         Cmap = cmap;
         Hhea = hhea;
         Hmtx = hmtx;
+        Vhea = vhea;
+        Vmtx = vmtx;
         Loca = loca;
         Glyf = glyf;
         Cff = cff;
@@ -110,6 +136,9 @@ public sealed class OpenTypeFont
         Fvar = fvar;
         Avar = avar;
         Gvar = gvar;
+        Hvar = hvar;
+        Kern = kern;
+        Gpos = gpos;
         CvtFunits = cvtFunits;
         Fpgm = fpgm;
         Prep = prep;
@@ -161,8 +190,8 @@ public sealed class OpenTypeFont
         Avar?.Apply(norm);
 
         return new OpenTypeFont(Directory, Head, Maxp, Cmap, Hhea, Hmtx, Loca, Glyf,
-            Cff, Colr, Cpal, Cblc, Cbdt, Fvar, Avar, Gvar,
-            CvtFunits, Fpgm, Prep, norm);
+            Cff, Colr, Cpal, Cblc, Cbdt, Fvar, Avar, Gvar, Hvar, Kern, Gpos,
+            CvtFunits, Fpgm, Prep, norm, Vhea, Vmtx);
     }
 
     /// <summary>True when the active variation is non-default (any axis ≠ 0 normalized).</summary>
@@ -242,6 +271,22 @@ public sealed class OpenTypeFont
     }
 
     /// <summary>
+    /// Get the kerning value (in FUnits) for the glyph pair. Prefers GPOS pair
+    /// adjustment (lookup type 2) when present; falls back to the legacy 'kern'
+    /// table otherwise. Returns 0 if no kerning pair exists or the font has no
+    /// kerning data.
+    /// </summary>
+    public int GetKerning(uint leftGlyphId, uint rightGlyphId)
+    {
+        if (Gpos is not null)
+        {
+            var gposAdj = Gpos.GetPairAdjustment(leftGlyphId, rightGlyphId);
+            if (gposAdj != 0) return gposAdj;
+        }
+        return Kern?.GetKerning(leftGlyphId, rightGlyphId) ?? 0;
+    }
+
+    /// <summary>
     /// Rasterize a glyph to an 8-bit grayscale alpha bitmap at
     /// <paramref name="pixelsPerEm"/>. Works for both TrueType and CFF.
     /// </summary>
@@ -250,6 +295,40 @@ public sealed class OpenTypeFont
         => SmoothRasterizer.Rasterize(
             sink => DrawGlyph(glyphId, sink),
             pixelsPerEm, UnitsPerEm, subSamples);
+
+    /// <summary>
+    /// Load and hint a TrueType glyph outline at <paramref name="pixelsPerEm"/>.
+    /// Returns null if the font has no hinting tables or no 'glyf' (use the
+    /// unhinted <see cref="LoadGlyphOutline"/> path instead). For glyphs without
+    /// a per-glyph instruction stream the returned outline is unhinted but
+    /// still scaled to pixel coordinates.
+    ///
+    /// <para><b>Phase 8 status:</b> the interpreter currently implements only a
+    /// subset of hinting opcodes — output may differ slightly from FreeType's
+    /// hinted result until the remaining verbs land.</para>
+    /// </summary>
+    public HintedOutline? LoadHintedOutline(uint glyphId, float pixelsPerEm)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(glyphId, (uint)NumGlyphs);
+        return HintingPipeline.Run(this, glyphId, pixelsPerEm);
+    }
+
+    /// <summary>
+    /// Rasterize a hinted TrueType glyph. Falls back to <see cref="RenderGlyph"/>
+    /// when the font has no hinting tables, when the glyph is CFF-flavored, or
+    /// when the outline is empty.
+    /// </summary>
+    public GlyphBitmap RenderGlyphHinted(uint glyphId, float pixelsPerEm,
+        int subSamples = SmoothRasterizer.DefaultSubSamples)
+    {
+        var hinted = LoadHintedOutline(glyphId, pixelsPerEm);
+        if (hinted is null || hinted.IsEmpty)
+            return RenderGlyph(glyphId, pixelsPerEm, subSamples);
+
+        // Hinted coords are already in pixel units; pass identity scale to
+        // the rasterizer.
+        return SmoothRasterizer.Rasterize(hinted.Walk, 1f, 1, subSamples);
+    }
 
     /// <summary>
     /// Render a color glyph to an RGBA bitmap. Tries COLR v0/v1 first
@@ -343,6 +422,27 @@ public sealed class OpenTypeFont
             avar = AvarTable.Parse(avarRec.Slice(span));
         if (dir.TryGet(Tags.Gvar2, out var gvarRec))
             gvar = GvarTable.Parse(data.Slice((int)gvarRec.Offset, (int)gvarRec.Length));
+        HvarTable? hvar = null;
+        if (dir.TryGet(Tags.Hvar, out var hvarRec))
+            hvar = HvarTable.Parse(hvarRec.Slice(span));
+
+        KernTable? kern = null;
+        if (dir.TryGet(Tags.Kern, out var kernRec))
+            kern = KernTable.Parse(kernRec.Slice(span));
+
+        GposTable? gpos = null;
+        if (dir.TryGet(Tags.Gpos, out var gposRec))
+            gpos = GposTable.Parse(gposRec.Slice(span));
+
+        VheaTable? vhea = null;
+        VmtxTable? vmtx = null;
+        if (dir.TryGet(Tags.Vhea, out var vheaRec))
+        {
+            vhea = VheaTable.Parse(vheaRec.Slice(span));
+            if (dir.TryGet(Tags.Vmtx, out var vmtxRec))
+                vmtx = VmtxTable.Parse(vmtxRec.Slice(span), vhea.NumberOfVMetrics, maxp.NumGlyphs);
+        }
+
         var normCoords = fvar is not null ? new float[fvar.Axes.Length] : Array.Empty<float>();
 
         ushort[]? cvtFunits = null;
@@ -359,8 +459,8 @@ public sealed class OpenTypeFont
         if (dir.TryGet(Tags.Prep2, out var prepRec)) prep = prepRec.Slice(span).ToArray();
 
         return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf,
-            cff, colr, cpal, cblc, cbdt, fvar, avar, gvar,
-            cvtFunits, fpgm, prep, normCoords);
+            cff, colr, cpal, cblc, cbdt, fvar, avar, gvar, hvar, kern, gpos,
+            cvtFunits, fpgm, prep, normCoords, vhea, vmtx);
     }
 
     /// <summary>Convenience: load from a file path.</summary>

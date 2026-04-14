@@ -64,4 +64,10 @@ internal static class Tags
     public static readonly Tag Fvar = Tag.Parse("fvar");
     public static readonly Tag Gvar = Tag.Parse("gvar");
     public static readonly Tag Avar = Tag.Parse("avar");
+    public static readonly Tag Hvar = Tag.Parse("HVAR");
+    public static readonly Tag Mvar = Tag.Parse("MVAR");
+    public static readonly Tag Vhea = Tag.Parse("vhea");
+    public static readonly Tag Vmtx = Tag.Parse("vmtx");
+    public static readonly Tag Kern = Tag.Parse("kern");
+    public static readonly Tag Gpos = Tag.Parse("GPOS");
 }

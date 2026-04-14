@@ -36,9 +36,15 @@ internal static class SimpleGlyphParser
 
         var pointCount = contourEnds[^1] + 1;
 
-        // instructionLength (uint16) + instructions (uint8 × n) — skip; hinting is Phase 8.
+        // instructionLength (uint16) + instructions (uint8 × n). Captured for
+        // Phase 8 hinting; consumers that don't hint can ignore Outline.Instructions.
         var instructionLength = r.ReadUInt16();
-        r.Skip(instructionLength);
+        byte[]? instructions = null;
+        if (instructionLength > 0)
+        {
+            instructions = new byte[instructionLength];
+            for (var i = 0; i < instructionLength; i++) instructions[i] = r.ReadByte();
+        }
 
         // Flags array (length = pointCount, with run-length compression).
         var flags = new byte[pointCount];
@@ -98,6 +104,6 @@ internal static class SimpleGlyphParser
         for (var i = 0; i < pointCount; i++)
             flags[i] &= OnCurve;
 
-        return new Outline(xs, ys, flags, contourEnds, bounds);
+        return new Outline(xs, ys, flags, contourEnds, bounds, instructions);
     }
 }

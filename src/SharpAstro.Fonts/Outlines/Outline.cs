@@ -25,7 +25,8 @@ public sealed class Outline
     private readonly int[] _contourEnds;  // inclusive end indices
 
     public Outline(short[] x, short[] y, byte[] flags, int[] contourEnds,
-        (short XMin, short YMin, short XMax, short YMax) bounds)
+        (short XMin, short YMin, short XMax, short YMax) bounds,
+        byte[]? instructions = null)
     {
         if (x.Length != y.Length || x.Length != flags.Length)
             throw new ArgumentException("Outline arrays must have equal length.");
@@ -34,9 +35,19 @@ public sealed class Outline
         _flags = flags;
         _contourEnds = contourEnds;
         Bounds = bounds;
+        Instructions = instructions;
     }
 
     public static readonly Outline Empty = new([], [], [], [], (0, 0, 0, 0));
+
+    /// <summary>
+    /// TrueType bytecode instructions for this glyph (Phase 8). Null if the
+    /// glyph carries no hinting program (CFF outlines, fonts without 'fpgm',
+    /// or simple glyphs with instructionLength == 0). Composite glyphs only
+    /// surface instructions when the WE_HAVE_INSTRUCTIONS flag is set on the
+    /// composite header.
+    /// </summary>
+    public byte[]? Instructions { get; }
 
     public bool IsEmpty => _contourEnds.Length == 0;
     public int PointCount => _x.Length;

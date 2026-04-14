@@ -37,4 +37,16 @@ internal sealed class Zone
     public const byte FlagOnCurve = 0x01;
     public const byte FlagTouchedX = 0x02;
     public const byte FlagTouchedY = 0x04;
+
+    /// <summary>Deep copy — used by <see cref="HintingSnapshot"/> to clone the
+    /// twilight zone for per-call interpreter instances.</summary>
+    public Zone Clone() => new(CurX.Length)
+    {
+        PointCount = PointCount,
+        CurX = (int[])CurX.Clone(),
+        CurY = (int[])CurY.Clone(),
+        OrgX = (int[])OrgX.Clone(),
+        OrgY = (int[])OrgY.Clone(),
+        Flags = (byte[])Flags.Clone(),
+    };
 }

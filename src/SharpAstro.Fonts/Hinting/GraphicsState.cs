@@ -11,9 +11,9 @@ internal struct GraphicsState
     /// <summary>Auto-flip behavior when measuring negative distances.</summary>
     public bool AutoFlip;
 
-    /// <summary>Round state — controls how distances are quantized to pixel grid.</summary>
-    public byte RoundState;
-    public int RoundPeriod;     // F26.6
+    /// <summary>Round mode — selects the rounding routine. See <see cref="Hinting.RoundMode"/>.</summary>
+    public RoundMode RoundMode;
+    public int RoundPeriod;     // F26.6 — used by ROUND_SUPER / SUPER45
     public int RoundPhase;      // F26.6
     public int RoundThreshold;  // F26.6
 
@@ -52,14 +52,29 @@ internal struct GraphicsState
     public ushort ScanControl;
     public byte ScanType;
 
+    /// <summary>
+    /// Engine compensation (F26.6) per distance type — bits 0-1 of MDRP/MIRP
+    /// opcodes encode the "color": 0=black, 1=white, 2=gray, 3=reserved.
+    /// FreeType adds the matching entry to the distance before rounding.
+    /// In v40 / grayscale mode FT uses {0,0,0,0}; non-zero values matter
+    /// for v35 / native ClearType compatibility.
+    /// </summary>
+    public int CompensationBlack;
+    public int CompensationWhite;
+    public int CompensationGray;
+    public int CompensationReserved;
+
     public static GraphicsState Default => new()
     {
         AutoFlip = true,
-        RoundState = 1, // RTG (round to grid)
+        RoundMode = RoundMode.Grid, // RTG default per spec
         RoundPeriod = F26Dot6.One,
         RoundPhase = 0,
         RoundThreshold = F26Dot6.One / 2,
-        ControlValueCutIn = 17 << 6 / 16, // 17/16 px = 1.0625 (default)
+        // 17/16 px = 1.0625 px in F26.6 = 68. Parens required — without them,
+        // C# precedence parses this as `17 << (6/16)` = `17 << 0` = 17, which
+        // makes virtually every CVT cut-in fail.
+        ControlValueCutIn = (17 << 6) / 16,
         MinimumDistance = F26Dot6.One,
         SingleWidthCutIn = 0,
         SingleWidthValue = 0,
@@ -73,5 +88,19 @@ internal struct GraphicsState
         DualX = 0x4000, DualY = 0,
         ScanControl = 0,
         ScanType = 2,
+        // v40 / grayscale: all compensations zero (per FT tt_metrics defaults).
+        CompensationBlack = 0,
+        CompensationWhite = 0,
+        CompensationGray = 0,
+        CompensationReserved = 0,
+    };
+
+    /// <summary>Look up engine compensation by the 2-bit color field.</summary>
+    public int CompensationFor(int color) => (color & 3) switch
+    {
+        0 => CompensationBlack,
+        1 => CompensationWhite,
+        2 => CompensationGray,
+        _ => CompensationReserved,
     };
 }

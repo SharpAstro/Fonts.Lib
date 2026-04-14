@@ -138,15 +138,21 @@ internal static class CompositeGlyphParser
                 allEnds.Add(basePointIndex + end);
         } while ((flag & MoreComponents) != 0);
 
-        // Skip any composite-level instructions (Phase 8).
+        // Composite-level instructions hint the assembled outline (per spec
+        // §"Composite glyph hinting"). Captured for Phase 8.
+        byte[]? compositeInstructions = null;
         if ((flag & WeHaveInstructions) != 0)
         {
-            var n = r.ReadUInt16();
-            r.Skip(n);
+            int n = r.ReadUInt16();
+            if (n > 0)
+            {
+                compositeInstructions = new byte[n];
+                for (var i = 0; i < n; i++) compositeInstructions[i] = r.ReadByte();
+            }
         }
 
         return new Outline(
             allX.ToArray(), allY.ToArray(), allFlags.ToArray(), allEnds.ToArray(),
-            bounds);
+            bounds, compositeInstructions);
     }
 }
