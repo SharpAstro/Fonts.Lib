@@ -13,6 +13,9 @@ hinting, variation, and CJK baseline suites.
 ## Goals
 
 - 100% managed C#, AOT-compatible, no native dependencies.
+- **Cross-platform** — targets `net10.0`, runs on x64 (Windows, Linux, macOS)
+  and ARM64 (Windows on ARM, Apple Silicon, Linux ARM64). SIMD hot paths
+  use `Vector<T>` to auto-scale across SSE2 / AVX2 / AVX-512 / AdvSIMD.
 - Thread-safe by construction (immutable font records, per-call rasterizer
   state, lock-free hinting snapshot cache).
 - MIT-licensed end to end. No code is copied from FreeType, SixLabors.Fonts,
@@ -157,6 +160,24 @@ All public, freely-implementable specs:
 ## Layout
 
 ```
-src/SharpAstro.Fonts/         pure library
-tests/SharpAstro.Fonts.Tests/ xUnit v3 tests + font fixtures
+src/SharpAstro.Fonts/                   pure library
+tests/SharpAstro.Fonts.Tests/           xUnit v3 tests + font fixtures
+benchmarks/SharpAstro.Fonts.Benchmarks/ BenchmarkDotNet perf suite
 ```
+
+## Development history
+
+Developed in 12 phases, each validated against golden output:
+
+1. SFNT skeleton + cmap
+2. TrueType outlines (glyf/loca, composite glyphs)
+3. Smooth rasterizer (analytic coverage)
+4. CFF1 (Type 2 charstring interpreter, CID-keyed fonts)
+5. COLR v0/v1 + CPAL (paint tree, gradients, composite modes)
+6. CBDT bitmap glyphs (PNG emoji)
+7. Variable fonts (fvar/avar/gvar/cvar/HVAR/VVAR/MVAR)
+8. TrueType bytecode hinting (v40 grayscale, ~150 opcodes)
+9. PostScript Type 1 (.pfb)
+10. SDF rasterizer, kern/GPOS kerning, stroker, vertical metrics
+11. WOFF / WOFF2
+12. DIR.Lib integration (replaced FreeType native bindings)

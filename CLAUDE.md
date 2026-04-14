@@ -1,5 +1,13 @@
 # CLAUDE.md
 
+## Cross-platform
+
+This library targets `net10.0` and must work optimally on **all** platforms
+.NET supports: x64 (Windows, Linux, macOS), ARM64 (Windows on ARM, Apple
+Silicon, Linux ARM64). Do not use platform-specific intrinsics
+(`Sse2`, `AdvSimd`) directly — use the portable `Vector<T>` or
+`Vector128/256/512` with `IsHardwareAccelerated` guards.
+
 ## Build & test
 
 ```bash
@@ -49,14 +57,22 @@ For scratch buffers in per-glyph pipelines (variation, hinting, rasterizer):
 - Do not pool output arrays that escape the method (e.g. the `short[]`
   arrays that become part of a new `Outline`).
 
-### SIMD — use `Vector128<float>` with scalar tail
+### SIMD — use `Vector<T>` for portable auto-scaling
 
-The SDF rasterizer uses `Vector128<float>` (4 lanes) for the inner edge
-loop. Pattern:
+Use `Vector<float>` / `Vector<int>` from `System.Numerics` for SIMD hot
+paths. It auto-sizes to the best available width at runtime:
 
-- Check `Vector128.IsHardwareAccelerated` once at the top.
-- Main loop: `for (; i + 3 < n; i += 4)` with `Vector128.LoadUnsafe`.
-- Scalar tail: `for (; i < n; i++)` for remaining elements.
-- Use `ref` + `Unsafe.Add` for span-based array access in the SIMD path.
+- **128-bit** on ARM64 (AdvSIMD) and x64 without AVX2
+- **256-bit** on x64 with AVX2
+- **512-bit** on x64 with AVX-512
 
-This works on both ARM64 (AdvSIMD) and x64 (SSE2+).
+Pattern:
+
+- Guard with `Vector.IsHardwareAccelerated`.
+- Use `Vector<T>.Count` for the lane count (not hardcoded).
+- Main loop: `for (; i + Vector<float>.Count <= n; i += Vector<float>.Count)`.
+- Scalar tail: `for (; i < n; i++)`.
+
+Do **not** hardcode `Vector128<float>` — that leaves performance on the
+table on AVX2/AVX-512 machines. Do **not** use platform-specific types
+like `Sse2` or `AdvSimd` — `Vector<T>` handles the dispatch.
