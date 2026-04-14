@@ -31,8 +31,9 @@ internal static class BaselineAssert
                 $"Refusing to baseline empty bitmap '{name}' — assertion likely wrong.");
 
         // Source-tree baseline path (committed alongside the tests).
+        // On CI the CallerFilePath may resolve to an inaccessible root (e.g. /_/);
+        // all reads/writes go through outBaselinePath in that case.
         var srcBaselineDir = Path.Combine(Path.GetDirectoryName(callerFile)!, "Baselines");
-        Directory.CreateDirectory(srcBaselineDir);
         var srcBaselinePath = Path.Combine(srcBaselineDir, name + ".bmp");
 
         // Output-tree mirror, populated by the csproj <Content> copy step.
