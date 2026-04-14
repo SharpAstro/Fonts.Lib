@@ -378,25 +378,28 @@ public static class ColrRenderer
 
         // Render the outline mask in surface space by transforming each outline
         // point through `xform` before passing to the rasterizer.
-        var mask = RenderOutlineMask(font, glyphPaint.GlyphID, surface.Width, surface.Height, xform);
-        if (mask is null) return;
+        var maskResult = RenderOutlineMask(font, glyphPaint.GlyphID, surface.Width, surface.Height, xform);
+        if (maskResult is not { } mask) return;
 
         // Per-pixel fill: compute the design-unit coordinate via the inverse
         // base xform (to get back to font units), then evaluate the inner paint.
+        // Only iterate the mask's bounding box — O(M²) where M = mask size.
         Matrix3x2.Invert(xform, out var invXform);
         var hasFillXform = !fillXform.IsIdentity;
         Matrix3x2 invFill = default;
         if (hasFillXform) Matrix3x2.Invert(fillXform, out invFill);
 
-        for (var y = 0; y < surface.Height; y++)
+        for (var my = 0; my < mask.MaskHeight; my++)
         {
-            for (var x = 0; x < surface.Width; x++)
+            var sy = mask.Y0 + my;
+            for (var mx = 0; mx < mask.MaskWidth; mx++)
             {
-                var alpha = mask[y * surface.Width + x];
+                var alpha = mask.Alpha[my * mask.MaskWidth + mx];
                 if (alpha == 0) continue;
-                var designPos = Vector2.Transform(new Vector2(x + 0.5f, y + 0.5f), invXform);
+                var sx = mask.X0 + mx;
+                var designPos = Vector2.Transform(new Vector2(sx + 0.5f, sy + 0.5f), invXform);
                 var color = SampleFill(fill, designPos, palette, hasFillXform ? invFill : Matrix3x2.Identity, hasFillXform);
-                surface.BlendOver(x, y, color, alpha);
+                surface.BlendOver(sx, sy, color, alpha);
             }
         }
     }
@@ -696,8 +699,35 @@ public static class ColrRenderer
         return t * Sa + Sc * (1f - Da) + Dc * (1f - Sa);
     }
 
-    private static byte[]? RenderOutlineMask(OpenTypeFont font, uint glyphId,
-        int width, int height, in Matrix3x2 xform)
+    /// <summary>
+    /// A glyph outline mask rendered in surface space: the alpha coverage buffer
+    /// plus its bounding box within the surface.
+    /// </summary>
+    private readonly struct OutlineMask
+    {
+        /// <summary>Alpha coverage for the bbox region (maskWidth × maskHeight).</summary>
+        public readonly byte[] Alpha;
+        /// <summary>Left edge of the mask in surface coordinates.</summary>
+        public readonly int X0;
+        /// <summary>Top edge of the mask in surface coordinates.</summary>
+        public readonly int Y0;
+        /// <summary>Width of the mask region.</summary>
+        public readonly int MaskWidth;
+        /// <summary>Height of the mask region.</summary>
+        public readonly int MaskHeight;
+
+        public OutlineMask(byte[] alpha, int x0, int y0, int maskWidth, int maskHeight)
+        {
+            Alpha = alpha;
+            X0 = x0;
+            Y0 = y0;
+            MaskWidth = maskWidth;
+            MaskHeight = maskHeight;
+        }
+    }
+
+    private static OutlineMask? RenderOutlineMask(OpenTypeFont font, uint glyphId,
+        int surfaceWidth, int surfaceHeight, in Matrix3x2 xform)
     {
         if (glyphId >= font.NumGlyphs) return null;
         var capturedXform = xform; // can't capture by ref in lambda
@@ -706,28 +736,34 @@ public static class ColrRenderer
             pixelsPerEm: 1, unitsPerEm: 1);
         if (bmp.IsEmpty) return null;
 
-        // Place the mask into a full surface-sized buffer so blending is O(1).
-        var alpha = new byte[width * height];
-        var x0 = bmp.Left;
-        var y0 = -bmp.Top; // mask top in surface coords (Top is "above baseline" but
-                          // since baseline is at world Y=0 and our world is surface-pixel-space,
-                          // Top = -y0_in_surface).
-        // Actually our TransformingSink already produces world-coord points whose
-        // (0,0) is the surface origin. SmoothRasterizer crops to its bounding box
-        // and reports Left/Top such that bitmap(0,0) sits at world (Left, -Top).
-        // We just need to place that bbox back into the surface.
-        for (var ry = 0; ry < bmp.Height; ry++)
+        // The rasterizer crops to the glyph's bounding box. Compute the bbox
+        // position in surface coordinates and clamp to the surface bounds.
+        var rawX0 = bmp.Left;
+        var rawY0 = -bmp.Top;
+
+        // Clamp the mask bbox to the surface. Pixels outside the surface are
+        // discarded — we only keep the intersection.
+        var clampedX0 = Math.Max(rawX0, 0);
+        var clampedY0 = Math.Max(rawY0, 0);
+        var clampedX1 = Math.Min(rawX0 + bmp.Width, surfaceWidth);
+        var clampedY1 = Math.Min(rawY0 + bmp.Height, surfaceHeight);
+
+        var maskW = clampedX1 - clampedX0;
+        var maskH = clampedY1 - clampedY0;
+        if (maskW <= 0 || maskH <= 0) return null;
+
+        // Copy the clamped region from the rasterizer's output into a compact buffer.
+        var alpha = new byte[maskW * maskH];
+        var srcOffX = clampedX0 - rawX0;
+        var srcOffY = clampedY0 - rawY0;
+        for (var ry = 0; ry < maskH; ry++)
         {
-            var sy = y0 + ry;
-            if ((uint)sy >= (uint)height) continue;
-            for (var rx = 0; rx < bmp.Width; rx++)
-            {
-                var sx = x0 + rx;
-                if ((uint)sx >= (uint)width) continue;
-                alpha[sy * width + sx] = bmp.Alpha[ry * bmp.Width + rx];
-            }
+            var srcRow = (srcOffY + ry) * bmp.Width + srcOffX;
+            var dstRow = ry * maskW;
+            bmp.Alpha.AsSpan(srcRow, maskW).CopyTo(alpha.AsSpan(dstRow, maskW));
         }
-        return alpha;
+
+        return new OutlineMask(alpha, clampedX0, clampedY0, maskW, maskH);
     }
 
     private static Rgba32 SampleFill(PaintRef fill, Vector2 designPos, Rgba32[] palette,
@@ -882,14 +918,15 @@ public static class ColrRenderer
     private static void FillGlyphMask(OpenTypeFont font, uint glyphId,
         ColorBitmap surface, in Matrix3x2 xform, Rgba32 color)
     {
-        var mask = RenderOutlineMask(font, glyphId, surface.Width, surface.Height, xform);
-        if (mask is null) return;
-        for (var y = 0; y < surface.Height; y++)
+        var maskResult = RenderOutlineMask(font, glyphId, surface.Width, surface.Height, xform);
+        if (maskResult is not { } mask) return;
+        for (var my = 0; my < mask.MaskHeight; my++)
         {
-            for (var x = 0; x < surface.Width; x++)
+            var sy = mask.Y0 + my;
+            for (var mx = 0; mx < mask.MaskWidth; mx++)
             {
-                var a = mask[y * surface.Width + x];
-                if (a != 0) surface.BlendOver(x, y, color, a);
+                var a = mask.Alpha[my * mask.MaskWidth + mx];
+                if (a != 0) surface.BlendOver(mask.X0 + mx, sy, color, a);
             }
         }
     }

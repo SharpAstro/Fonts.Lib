@@ -38,11 +38,13 @@ namespace SharpAstro.Fonts;
 /// <summary>
 /// A loaded OpenType / TrueType font face.
 ///
-/// <para><b>Thread-safety:</b> instances are immutable after construction —
-/// every field references either an immutable record or a read-only view over
-/// the original byte buffer. There are no internal mutexes, locks, or lazy
-/// caches; concurrent reads from any number of threads are safe and
-/// lock-free.</para>
+/// <para><b>Thread-safety:</b> instances are safe for concurrent use from any
+/// number of threads. All table data is immutable after construction. The only
+/// mutable state is a per-(ppem) <see cref="System.Collections.Concurrent.ConcurrentDictionary{TKey,TValue}"/>
+/// hinting snapshot cache that grows lazily on first hinted render at each size —
+/// this is lock-free and race-safe (duplicate builds are harmless). Per-glyph
+/// hinting interpreters clone mutable state from the snapshot, so concurrent
+/// glyph renders never share writable buffers.</para>
 ///
 /// <para><b>Memory:</b> the original font byte array is retained as
 /// <see cref="ReadOnlyMemory{Byte}"/>; outline tables (glyf/loca) are parsed
@@ -230,6 +232,14 @@ public sealed class OpenTypeFont
     /// </summary>
     public uint GetGlyphId(uint codepoint)
         => _preferredCmap?.GetGlyphId(codepoint) ?? 0u;
+
+    /// <summary>
+    /// Look up a glyph id for a (base codepoint, variation selector) pair via
+    /// the cmap format 14 subtable. Used for Ideographic Variation Sequences
+    /// (IVS) and emoji variation sequences. Returns 0 if not mapped.
+    /// </summary>
+    public uint GetGlyphId(uint codepoint, uint variationSelector)
+        => Cmap.GetVariationGlyphId(codepoint, variationSelector);
 
     /// <summary>
     /// Look up a glyph id for a PDF char-code using the strategy in

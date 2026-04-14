@@ -41,6 +41,30 @@ public sealed class CmapTable
         return Subtables.Count > 0 ? Subtables[0] : null;
     }
 
+    /// <summary>
+    /// Look up a glyph for a (base codepoint, variation selector) pair via the
+    /// cmap format 14 subtable. If the format 14 subtable says "use default",
+    /// falls back to the preferred Unicode subtable. Returns 0 if not mapped.
+    /// </summary>
+    public uint GetVariationGlyphId(uint codepoint, uint variationSelector)
+    {
+        foreach (var s in Subtables)
+        {
+            if (s is Format14Subtable f14)
+            {
+                var result = f14.GetVariationGlyphId(codepoint, variationSelector, out var gid);
+                return result switch
+                {
+                    Format14Subtable.VariationResult.Found => gid,
+                    Format14Subtable.VariationResult.UseDefault =>
+                        PreferredUnicodeSubtable()?.GetGlyphId(codepoint) ?? 0u,
+                    _ => 0u, // NotDefined
+                };
+            }
+        }
+        return 0u;
+    }
+
     /// <summary>Find a subtable by platform / encoding id, or null.</summary>
     public CmapSubtable? Find(ushort platformId, ushort encodingId)
     {

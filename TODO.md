@@ -4,56 +4,27 @@ Living document of deliberately-deferred work and known limitations.
 ROADMAP.md is the forward plan; this file is "what we know about, but
 chose not to do (yet) and why."
 
-## Deferred phases
+## Completed phases (previously deferred)
 
-### Phase 8 — TrueType bytecode hinting · **CORE LANDED**
+### Phase 8 — TrueType bytecode hinting · **DONE**
 
-The interpreter foundation + the common-path verbs ship; see ROADMAP.md
-for the current opcode coverage. **Phase 8.5 follow-ups:** DELTAP1/2/3
-+ DELTAC1/2/3, ISECT, per-(face, ppem) cache, lock-free per-call
-interpreter snapshot. Validation against DIR.Lib's `RenderAcceptanceTests`
-baselines (16 tests fail without hinting in DIR.Lib's full-FT-removal
-state) is the next downstream consumer task.
-
-(Original cost/benefit analysis kept below for reference.)
-
-**What it is:** Full TrueType bytecode interpreter — stack VM, ~200
-opcodes, graphics state machine, twilight zone, `fpgm` / `prep` / per-glyph
-hinting programs. ~5-8k LOC of the gnarliest code in the library.
-
-**What it would help:**
-- 8-12 px body text in well-hinted system fonts (MS, Source Code Pro, …)
-- Stem consistency at very small sizes
-
-**What it doesn't help:**
-- Color emoji (COLR / CBDT) — no hinting involved
-- Variable fonts at non-default axes — hint programs assume default instance
-- Sizes ≥ ~16 px — supersampling AA already produces clean output
-- High-DPI rendering
-
-**Why skip:** DIR.Lib renders PDF text, chess pieces, color emoji. None
-fit the "small body text in a system font" niche. FreeType itself
-defaults to "v40" mode which intentionally drops most hinting.
-`ttf-parser` (popular Rust library) ships without it. The juice is
-not worth the squeeze for our scope.
-
-**Revisit trigger:** specific user complaint about small-text rendering
-quality on a non-DPI-scaled display. Then we re-scope.
+Full v40 grayscale interpreter including Phase 8.5 follow-ups:
+DELTAP1/2/3, DELTAC1/2/3, ISECT, per-(face, ppem) `HintingSnapshot`
+cache with thread-safe per-call clone, engine compensation, v40
+X-direction skip. Bug fixes: IUP double-shift, ScaleFunits truncation,
+CutIn precedence, SHP/SHC/SHZ inversion.
 
 ## Known limitations
 
 These ship in Phase 5/6/7 but with caveats. Listed by table.
 
 ### COLR v1 (Phase 5)
-- **`PaintLinearGradient`** ignores the `p2` direction parameter. Most
-  fonts have `p2` collinear with `p0p1` so the simplified projection
-  matches; off-axis gradients render slightly wrong.
-- **`PaintComposite`** modes other than `SrcOver` render as `SrcOver`.
-  CSS `mix-blend-mode` mapping exists for the SVG path but is not
-  emitted; the rasterizer doesn't support non-`SrcOver` blending at all.
-- **`Var*` paint formats** (3, 5, 7, 9, 13, 15, 17, …) render nothing.
-  Wire up alongside the variable-font Item Variation Store backlog
-  (below).
+- ~~**`PaintLinearGradient`** `p2` direction~~ — **DONE** (commit `890fc3c`).
+- ~~**`PaintComposite`** modes~~ — **DONE**: full Porter-Duff + separable
+  modes (commit `bbc205f`). HSL non-separable modes (`Hue`, `Saturation`,
+  `Color`, `Luminosity`) still fall back to `SrcOver`.
+- ~~**`Var*` paint formats**~~ — **DONE**: wired via Item Variation Store
+  (commit `bbc205f`).
 - **`PaintRotate` / `PaintScale` axis-around-center scaling** is
   approximate when `gradXform` includes non-uniform scale (the
   `rScale` heuristic in `ColrSvgWriter.AsRadialGradient` linearizes a
@@ -75,22 +46,13 @@ These ship in Phase 5/6/7 but with caveats. Listed by table.
   Apple emoji fixture in the corpus to validate against.
 
 ### Variable fonts (Phase 7)
-- **Composite glyph variation** — `gvar` deltas for composites encode
-  component-anchor offsets via phantom points. Currently not applied;
-  each component glyph still gets its own `gvar` deltas individually,
-  producing mostly-correct accented forms with potentially-misaligned
-  diacritics at extreme axis values.
-- **HVAR / VVAR** (advance-width / vertical-metrics variation) not
-  implemented. `hmtx.GetAdvanceWidth(gid)` returns the default-instance
-  advance regardless of active variation. Affects layout precision at
-  non-default weights; doesn't affect glyph rendering.
-- **MVAR** (font-wide metric variation) not implemented.
-- **`cvar`** (CVT hint-program deltas) not implemented — would only
-  matter if Phase 8 lands.
+- ~~**Composite glyph variation**~~ — **DONE** (commit `bbc205f`).
+- ~~**HVAR / VVAR**~~ — **DONE** (commits `f74e2ad` / `bbc205f`).
+- ~~**MVAR**~~ — **DONE** (commit `bbc205f`).
+- ~~**`cvar`**~~ — **DONE** (commit `bbc205f`).
+- ~~**Item Variation Store**~~ — **DONE** (commit `f74e2ad`).
 - **CFF2** (`blend` operator, uint32 INDEX counts) not implemented.
   All variable fonts in our corpus are TrueType-based; no CFF2 fixture.
-- **Item Variation Store** (used by HVAR/MVAR/COLRv1 `Var*` paints)
-  not implemented. Unblocks a chunk of items above when added.
 
 ### CFF / Type 2 (Phase 4)
 - **Flex operators** (`hflex`, `flex`, `hflex1`, `flex1`) silently
@@ -123,9 +85,10 @@ separate library if needed.
 After Phase 12 swap, profile DIR.Lib end-to-end and fix what's slow.
 Likely candidates:
 
-- **`ColrRenderer.RenderPaintGlyph`** iterates all surface pixels for
-  each layer. Could iterate just the mask bbox — easy O(N²) → O(M²)
-  win where M = mask size, N = surface size.
+- ~~**`ColrRenderer.RenderPaintGlyph`** O(N²) full-surface iteration~~ —
+  **DONE**: `RenderOutlineMask` now returns a compact bbox-sized mask;
+  both `RenderPaintGlyph` and `FillGlyphMask` iterate only the mask
+  region — O(M²) where M = glyph bbox.
 - **`OutlineVariation.Apply`** allocates two `float[pointCount]` +
   `bool[pointCount]` per glyph render. `ArrayPool<T>.Shared` would
   drop variable-font heavy-render allocation pressure.
@@ -145,9 +108,12 @@ non-negotiable invariant; performance is a knob to turn after.
 ## Test coverage backlog
 
 - **Composite glyphs in variable fonts** (e.g. `é` in Roboto Flex) —
-  add a visual regression baseline now that we know the
-  diacritic-misalignment limitation exists.
+  add a visual regression baseline now that composite glyph variation
+  is implemented. Verifies diacritic positioning at non-default axis values.
 - **TTC (TrueType Collection)** loading — `OpenTypeFont.Load(data,
   faceOffset)` already supports it but no test exercises it.
 - **Bidirectional / RTL text fixtures** — none of our tests exercise
   Arabic / Hebrew at the cmap level.
+- ~~**CJK / cmap format 14 (variation selectors)**~~ — **DONE**: 4 CJK
+  fixtures (NotoSansJP/KR/SC/TC), cmap format 14 parser, IVS lookup API,
+  11 CJK baseline images (base + IVS variant glyphs).

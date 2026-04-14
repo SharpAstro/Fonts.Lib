@@ -375,13 +375,16 @@ internal sealed class Interpreter
             case Op.JROT:    { var cond = Pop(); var off = Pop(); if (cond != 0) ip = ip - 1 + off; break; }
             case Op.JROF:    { var cond = Pop(); var off = Pop(); if (cond == 0) ip = ip - 1 + off; break; }
 
-            // Function defs
+            // Function defs — only allowed in fpgm/prep, not glyph programs.
+            // The _functions array is shared across concurrent per-glyph interpreters
+            // (thread-safe because it's read-only after fpgm). Reject FDEF/IDEF
+            // during glyph execution to prevent writes to the shared array.
             case Op.FDEF:
             {
                 var fid = Pop();
                 var bodyStart = ip;
                 while (ip < code.Length && code[ip] != (byte)Op.ENDF) ip++;
-                if (fid >= 0 && fid < _functions.Length)
+                if (!_inGlyphProgram && fid >= 0 && fid < _functions.Length)
                     _functions[fid] = new Function(code, bodyStart, ip - bodyStart);
                 ip++; // skip ENDF
                 break;
@@ -389,7 +392,7 @@ internal sealed class Interpreter
             case Op.IDEF:
             {
                 // Instruction definition — overrides an unused opcode. Rare;
-                // skip body for now (still consumes the ID).
+                // skip body during glyph programs (same reason as FDEF).
                 Pop();
                 while (ip < code.Length && code[ip] != (byte)Op.ENDF) ip++;
                 ip++;

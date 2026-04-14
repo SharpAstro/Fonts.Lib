@@ -4,9 +4,8 @@ namespace SharpAstro.Fonts.Tables.Cmap;
 
 /// <summary>
 /// One cmap subtable. Implementations cover the formats commonly found in
-/// modern OpenType fonts: 0, 4, 6, 10, 12. Formats 2 (high-byte mapping for
-/// CJK), 8 (mixed 16/32), 13 (last-resort), and 14 (variation selectors)
-/// land in later phases as needed.
+/// modern OpenType fonts: 0, 4, 6, 12, 14. Formats 2 (high-byte mapping for
+/// CJK), 8 (mixed 16/32), and 13 (last-resort) land in later phases as needed.
 /// </summary>
 public abstract class CmapSubtable
 {
@@ -39,6 +38,7 @@ public abstract class CmapSubtable
             4 => Format4Subtable.Parse(tableData, offset, platformId, encodingId),
             6 => Format6Subtable.Parse(tableData, offset, platformId, encodingId),
             12 => Format12Subtable.Parse(tableData, offset, platformId, encodingId),
+            14 => Format14Subtable.Parse(tableData, offset, platformId, encodingId),
             _ => null, // unsupported; ignored
         };
     }
@@ -198,6 +198,190 @@ internal sealed class Format6Subtable : CmapSubtable
         var arr = new ushort[entryCount];
         for (var i = 0; i < entryCount; i++) arr[i] = r.ReadUInt16();
         return new Format6Subtable(plat, enc, firstCode, arr);
+    }
+}
+
+/// <summary>
+/// Format 14 — Unicode Variation Sequences (UVS).
+/// Maps (base codepoint, variation selector) pairs to glyph IDs.
+/// Used by CJK fonts for Ideographic Variation Sequences (IVS) where the same
+/// base codepoint renders as different glyphs depending on the variation selector
+/// (e.g. U+E0100–U+E01EF for CJK regional variants).
+///
+/// This subtable does NOT participate in normal <see cref="GetGlyphId"/> lookups.
+/// Instead, callers use <see cref="GetVariationGlyphId"/> with a variation selector.
+/// </summary>
+internal sealed class Format14Subtable : CmapSubtable
+{
+    /// <summary>
+    /// One variation selector record: the selector codepoint and its
+    /// default/non-default UVS offset pairs.
+    /// </summary>
+    private readonly struct VarSelectorRecord
+    {
+        public readonly uint VarSelector;
+        /// <summary>Sorted array of (startUnicodeValue, additionalCount) for default UVS.</summary>
+        public readonly (uint Start, byte Count)[] DefaultRanges;
+        /// <summary>Sorted array of (unicodeValue, glyphID) for non-default UVS.</summary>
+        public readonly (uint Unicode, uint GlyphId)[] NonDefaultMappings;
+
+        public VarSelectorRecord(uint varSelector,
+            (uint, byte)[] defaultRanges,
+            (uint, uint)[] nonDefaultMappings)
+        {
+            VarSelector = varSelector;
+            DefaultRanges = defaultRanges;
+            NonDefaultMappings = nonDefaultMappings;
+        }
+    }
+
+    private readonly VarSelectorRecord[] _records;
+
+    private Format14Subtable(ushort plat, ushort enc, VarSelectorRecord[] records)
+        : base(plat, enc, 14) => _records = records;
+
+    /// <summary>
+    /// Format 14 does not support plain codepoint→GID lookups.
+    /// Always returns 0; use <see cref="GetVariationGlyphId"/> instead.
+    /// </summary>
+    public override uint GetGlyphId(uint codepoint) => 0u;
+
+    /// <summary>
+    /// Result of a variation selector lookup.
+    /// </summary>
+    public enum VariationResult
+    {
+        /// <summary>The (base, selector) pair is not defined in this subtable.</summary>
+        NotDefined,
+        /// <summary>Use the default glyph for this base codepoint (from a normal cmap subtable).</summary>
+        UseDefault,
+        /// <summary>Use the specific glyph ID in <see cref="GetVariationGlyphId"/>.</summary>
+        Found,
+    }
+
+    /// <summary>
+    /// Look up a (base codepoint, variation selector) pair.
+    /// Returns the result type and the glyph ID (only meaningful when result is <see cref="VariationResult.Found"/>).
+    /// </summary>
+    public VariationResult GetVariationGlyphId(uint codepoint, uint variationSelector, out uint glyphId)
+    {
+        glyphId = 0;
+
+        // Binary search for the variation selector record.
+        int lo = 0, hi = _records.Length - 1;
+        while (lo <= hi)
+        {
+            var mid = (lo + hi) >>> 1;
+            var vs = _records[mid].VarSelector;
+            if (variationSelector < vs) hi = mid - 1;
+            else if (variationSelector > vs) lo = mid + 1;
+            else
+            {
+                ref readonly var rec = ref _records[mid];
+
+                // Check non-default mappings first (explicit glyph override).
+                var ndm = rec.NonDefaultMappings;
+                int nlo = 0, nhi = ndm.Length - 1;
+                while (nlo <= nhi)
+                {
+                    var nmid = (nlo + nhi) >>> 1;
+                    if (codepoint < ndm[nmid].Unicode) nhi = nmid - 1;
+                    else if (codepoint > ndm[nmid].Unicode) nlo = nmid + 1;
+                    else
+                    {
+                        glyphId = ndm[nmid].GlyphId;
+                        return VariationResult.Found;
+                    }
+                }
+
+                // Check default UVS ranges.
+                var dr = rec.DefaultRanges;
+                int dlo = 0, dhi = dr.Length - 1;
+                while (dlo <= dhi)
+                {
+                    var dmid = (dlo + dhi) >>> 1;
+                    var start = dr[dmid].Start;
+                    var end = start + dr[dmid].Count; // additionalCount, so range is [start, start+count]
+                    if (codepoint < start) dhi = dmid - 1;
+                    else if (codepoint > end) dlo = dmid + 1;
+                    else return VariationResult.UseDefault;
+                }
+
+                return VariationResult.NotDefined;
+            }
+        }
+
+        return VariationResult.NotDefined;
+    }
+
+    internal static Format14Subtable Parse(ReadOnlySpan<byte> data, int offset,
+        ushort plat, ushort enc)
+    {
+        var r = new BigEndianReader(data, offset);
+        // format (uint16) = 14
+        r.Skip(2);
+        // length (uint32) — total byte length of this subtable
+        r.Skip(4);
+        var numVarSelectorRecords = r.ReadUInt32();
+
+        var records = new VarSelectorRecord[numVarSelectorRecords];
+        // First pass: read the selector records (each 11 bytes: uint24 + uint32 + uint32).
+        var selectorEntries = new (uint VarSelector, uint DefaultUVSOffset, uint NonDefaultUVSOffset)[numVarSelectorRecords];
+        for (var i = 0; i < numVarSelectorRecords; i++)
+        {
+            var varSelector = r.ReadUInt24();
+            var defaultUVSOffset = r.ReadUInt32();
+            var nonDefaultUVSOffset = r.ReadUInt32();
+            selectorEntries[i] = (varSelector, defaultUVSOffset, nonDefaultUVSOffset);
+        }
+
+        // Second pass: parse default and non-default UVS tables.
+        for (var i = 0; i < numVarSelectorRecords; i++)
+        {
+            var (varSelector, defaultOff, nonDefaultOff) = selectorEntries[i];
+
+            // Default UVS table: array of (startUnicodeValue uint24, additionalCount uint8).
+            (uint, byte)[] defaultRanges;
+            if (defaultOff != 0)
+            {
+                var dr = new BigEndianReader(data, offset + (int)defaultOff);
+                var numRanges = dr.ReadUInt32();
+                defaultRanges = new (uint, byte)[numRanges];
+                for (var j = 0; j < numRanges; j++)
+                {
+                    var start = dr.ReadUInt24();
+                    var count = dr.ReadByte();
+                    defaultRanges[j] = (start, count);
+                }
+            }
+            else
+            {
+                defaultRanges = [];
+            }
+
+            // Non-default UVS table: array of (unicodeValue uint24, glyphID uint16).
+            (uint, uint)[] nonDefaultMappings;
+            if (nonDefaultOff != 0)
+            {
+                var nr = new BigEndianReader(data, offset + (int)nonDefaultOff);
+                var numMappings = nr.ReadUInt32();
+                nonDefaultMappings = new (uint, uint)[numMappings];
+                for (var j = 0; j < numMappings; j++)
+                {
+                    var unicode = nr.ReadUInt24();
+                    var gid = nr.ReadUInt16();
+                    nonDefaultMappings[j] = (unicode, gid);
+                }
+            }
+            else
+            {
+                nonDefaultMappings = [];
+            }
+
+            records[i] = new VarSelectorRecord(varSelector, defaultRanges, nonDefaultMappings);
+        }
+
+        return new Format14Subtable(plat, enc, records);
     }
 }
 

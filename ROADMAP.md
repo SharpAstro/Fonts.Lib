@@ -8,7 +8,7 @@ FreeType-generated golden output for the test corpus.
 - Big-endian span reader
 - SFNT directory + table records (including TTC support)
 - Required tables: `head`, `maxp`, `hhea`, `hmtx`, `name`, `OS/2`, `post`
-- `cmap` subtables 0, 4, 6, 12 (then 13, 14)
+- `cmap` subtables 0, 4, 6, 12, 14 (then 13)
 - Public `OpenTypeFont` entry point with codepoint → glyph-id lookup
 
 ## Phase 2 — TrueType outlines

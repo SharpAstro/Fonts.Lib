@@ -20,6 +20,14 @@ internal static class Fixtures
     public const string SourceSans3 = "SourceSans3-Regular.otf";
     /// <summary>RobotoFlex.ttf — variable font reference (SIL OFL 1.1).</summary>
     public const string RobotoFlex = "RobotoFlex.ttf";
+    /// <summary>NotoSansJP-Regular.otf — CJK CFF/OTF with cmap format 14 (IVS). SIL OFL 1.1.</summary>
+    public const string NotoSansJP = "NotoSansJP-Regular.otf";
+    /// <summary>NotoSansKR-Regular.otf — CJK CFF/OTF with cmap format 14 (IVS). SIL OFL 1.1.</summary>
+    public const string NotoSansKR = "NotoSansKR-Regular.otf";
+    /// <summary>NotoSansSC-Regular.otf — CJK CFF/OTF with cmap format 14 (IVS). SIL OFL 1.1.</summary>
+    public const string NotoSansSC = "NotoSansSC-Regular.otf";
+    /// <summary>NotoSansTC-Regular.otf — CJK CFF/OTF with cmap format 14 (IVS). SIL OFL 1.1.</summary>
+    public const string NotoSansTC = "NotoSansTC-Regular.otf";
 
     /// <summary>All bundled fixture fonts. Useful for "applies-to-every-font" smoke tests.</summary>
     public static readonly string[] All =
@@ -27,5 +35,6 @@ internal static class Fixtures
         XXTIIT_Arial_Subset, Tahoma_Subset, ISOCPEUR_Subset, Merida,
         DejaVuSans, Noto_COLRv1, NotoColorEmoji, BabelStoneXiangqiColour,
         SourceSans3, RobotoFlex,
+        NotoSansJP, NotoSansKR, NotoSansSC, NotoSansTC,
     ];
 }
