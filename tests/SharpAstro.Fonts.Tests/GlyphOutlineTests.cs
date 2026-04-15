@@ -126,11 +126,12 @@ public class GlyphOutlineTests
         public int MoveCount { get; private set; }
         public int LineCount { get; private set; }
         public int QuadCount { get; private set; }
+        public int CubicCount { get; private set; }
         public int CloseCount { get; private set; }
         public void MoveTo(float x, float y) => MoveCount++;
         public void LineTo(float x, float y) => LineCount++;
         public void QuadTo(float cx, float cy, float x, float y) => QuadCount++;
-        public void CubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y) { /* TT outlines never emit cubics */ }
+        public void CubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y) => CubicCount++;
         public void Close() => CloseCount++;
     }
 }

@@ -3,9 +3,8 @@ using SharpAstro.Fonts.Outlines;
 namespace SharpAstro.Fonts.Tests;
 
 /// <summary>
-/// Eyeball-friendly tests: dump glyph outlines to SVG files under
-/// <c>bin/Debug/net10.0/SvgDumps/</c> so the outline parser + composite
-/// resolver can be visually verified before the rasterizer lands.
+/// Dump glyph outlines to SVG files under <c>bin/.../SvgDumps/</c> for
+/// visual verification of the outline parser and composite resolver.
 ///
 /// These are not strict assertions — they pass as long as SVG generation
 /// doesn't throw and the output is non-trivial. Open the produced files

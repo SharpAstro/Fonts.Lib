@@ -45,6 +45,42 @@ public class ColrTests
         hasOpaque.ShouldBeTrue();
     }
 
+    [Theory]
+    [InlineData(0x1F534, 150, 0, 0)]   // 🔴 RED CIRCLE — dominant red
+    [InlineData(0x1F7E2, 0, 100, 0)]   // 🟢 GREEN CIRCLE — dominant green
+    [InlineData(0x1F7E1, 150, 150, 0)]  // 🟡 YELLOW CIRCLE — red+green, low blue
+    public void NotoCOLRv1_BrightEmoji_HasPlausibleColor(int codepoint,
+        int minR, int minG, int minB)
+    {
+        var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.Noto_COLRv1));
+        var gid = font.GetGlyphId((uint)codepoint);
+        gid.ShouldBeGreaterThan(0u);
+
+        var bmp = font.RenderColor(gid, 96f);
+        bmp.ShouldNotBeNull();
+        bmp.IsEmpty.ShouldBeFalse();
+
+        long rSum = 0, gSum = 0, bSum = 0;
+        var opaqueCount = 0;
+        for (var i = 0; i < bmp.Pixels.Length; i += 4)
+        {
+            if (bmp.Pixels[i + 3] > 0)
+            {
+                rSum += bmp.Pixels[i];
+                gSum += bmp.Pixels[i + 1];
+                bSum += bmp.Pixels[i + 2];
+                opaqueCount++;
+            }
+        }
+        opaqueCount.ShouldBeGreaterThan(0, "emoji should have opaque pixels");
+        var avgR = (int)(rSum / opaqueCount);
+        var avgG = (int)(gSum / opaqueCount);
+        var avgB = (int)(bSum / opaqueCount);
+        avgR.ShouldBeGreaterThanOrEqualTo(minR, $"U+{codepoint:X5} avgR={avgR}");
+        avgG.ShouldBeGreaterThanOrEqualTo(minG, $"U+{codepoint:X5} avgG={avgG}");
+        avgB.ShouldBeGreaterThanOrEqualTo(minB, $"U+{codepoint:X5} avgB={avgB}");
+    }
+
     [Fact]
     public void DejaVuSans_HasNoColorGlyphs()
     {

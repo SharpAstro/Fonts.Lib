@@ -1,10 +1,9 @@
 namespace SharpAstro.Fonts.Tests;
 
 /// <summary>
-/// Phase 8 foundation smoke tests. The interpreter doesn't yet produce
-/// hinted output (most hinting opcodes are no-ops); these tests just
-/// verify the table-parsing + dispatcher path is structurally sound and
-/// can run real-world fpgm/prep without crashing.
+/// TrueType hinting tests. Verifies the full v40 interpreter pipeline:
+/// table parsing, fpgm/prep execution, per-glyph instruction dispatch,
+/// pixel-grid snapping, and hinted bitmap output.
 /// </summary>
 public class HintingFoundationTests
 {

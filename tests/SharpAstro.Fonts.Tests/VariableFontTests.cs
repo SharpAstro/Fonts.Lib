@@ -59,13 +59,19 @@ public class VariableFontTests
         lightOutline.PointCount.ShouldBe(heavyOutline.PointCount);
         lightOutline.ContourCount.ShouldBe(heavyOutline.ContourCount);
 
-        // But coords must differ — heavy weight thickens the strokes.
-        var lx = lightOutline.X.ToArray();
-        var hx = heavyOutline.X.ToArray();
-        var anyDifferent = false;
-        for (var i = 0; i < lx.Length; i++)
-            if (lx[i] != hx[i]) { anyDifferent = true; break; }
-        anyDifferent.ShouldBeTrue("heavy and light weight outlines must differ");
+        // Coords must differ — heavy weight thickens the strokes.
+        var maxDx = 0;
+        var maxDy = 0;
+        for (var i = 0; i < lightOutline.PointCount; i++)
+        {
+            var dx = Math.Abs(heavyOutline.X[i] - lightOutline.X[i]);
+            var dy = Math.Abs(heavyOutline.Y[i] - lightOutline.Y[i]);
+            if (dx > maxDx) maxDx = dx;
+            if (dy > maxDy) maxDy = dy;
+        }
+        // gvar deltas should produce significant coordinate shifts (tens of FUnits).
+        maxDx.ShouldBeGreaterThan(10, "heavy vs light should differ in X by >10 FUnits");
+        maxDy.ShouldBeGreaterThan(0, "heavy vs light should differ in Y");
     }
 
     [Fact]

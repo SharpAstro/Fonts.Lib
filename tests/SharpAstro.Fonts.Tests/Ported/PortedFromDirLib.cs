@@ -4,11 +4,9 @@ using SharpAstro.Fonts.Tables.Cmap;
 namespace SharpAstro.Fonts.Tests.Ported;
 
 /// <summary>
-/// DIR.Lib parity tests, ported to the SharpAstro.Fonts API. Replaces the
-/// original placeholder skips. The originals live at
-/// <c>DIR.Lib/src/DIR.Lib.Tests/{CmapDumpTests,CmapLookupOrderTests,FontInspectionTests,SubsetFontGlyphTests,RenderAcceptanceTests}.cs</c>
-/// and exercised <c>FreeTypeGlyphRasterizer.RasterizeGlyphWithCharCode</c>;
-/// these versions use <see cref="OpenTypeFont.GetGlyphId(uint, uint, GlyphMapHint)"/>
+/// DIR.Lib parity tests, ported to the SharpAstro.Fonts API. The originals
+/// live in DIR.Lib.Tests and exercised FreeTypeGlyphRasterizer; these
+/// versions use <see cref="OpenTypeFont.GetGlyphId(uint, uint, GlyphMapHint)"/>
 /// + <see cref="OpenTypeFont.RenderGlyph(uint, float, int)"/>.
 /// </summary>
 public class PortedFromDirLib
