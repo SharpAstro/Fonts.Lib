@@ -141,7 +141,7 @@ public static class Woff2Reader
 
         // ---- 3. Brotli-decompress the concatenated table data ----
         var compressedData = woff2Data.Slice(pos, (int)totalCompressedSize);
-        var decompressed   = BrotliDecompress(compressedData);
+        var decompressed   = BrotliDecompress(compressedData, (int)totalSfntSize);
 
         // ---- 4. Rebuild each table from the decompressed stream ----
         //
@@ -214,14 +214,14 @@ public static class Woff2Reader
     // Brotli decompression
     // -------------------------------------------------------------------------
 
-    private static byte[] BrotliDecompress(ReadOnlySpan<byte> compressed)
+    private static byte[] BrotliDecompress(ReadOnlySpan<byte> compressed, int uncompressedSize)
     {
-        // BrotliStream requires a Stream; copy to MemoryStream.
-        using var input  = new MemoryStream(compressed.ToArray());
-        using var brotli = new BrotliStream(input, CompressionMode.Decompress);
-        using var output = new MemoryStream();
-        brotli.CopyTo(output);
-        return output.ToArray();
+        // BrotliDecoder.TryDecompress: pure span-to-span, no Stream wrapper,
+        // no intermediate copies. The output size is known from the WOFF2 header.
+        var result = new byte[uncompressedSize];
+        if (!BrotliDecoder.TryDecompress(compressed, result, out _))
+            throw new InvalidDataException("Brotli decompression failed.");
+        return result;
     }
 
     // -------------------------------------------------------------------------

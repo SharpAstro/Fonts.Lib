@@ -192,23 +192,18 @@ public static class WoffReader
     /// </summary>
     private static void DecompressZlib(ReadOnlySpan<byte> compressed, Span<byte> dest)
     {
-        // ZLibStream needs a Stream; wrap the span in a MemoryStream via a
-        // temporary byte array copy (unavoidable — Stream.Read requires Memory<T>
-        // and we have only a Span from a larger buffer).
-        var compressedArray = compressed.ToArray();
-        using var input = new MemoryStream(compressedArray, writable: false);
-        using var zlib  = new ZLibStream(input, CompressionMode.Decompress, leaveOpen: false);
+        // ZLibStream requires a Stream for input — one copy is unavoidable
+        // since we only have a ReadOnlySpan (no pinnable backing without unsafe).
+        using var input = new MemoryStream(compressed.ToArray(), writable: false);
+        using var zlib  = new ZLibStream(input, CompressionMode.Decompress);
 
+        // Read directly into the dest span — no intermediate buffer needed.
+        // Stream.Read(Span<byte>) is available on .NET 6+.
         var written = 0;
         while (written < dest.Length)
         {
-            // Read into a temporary buffer then copy into the span, because
-            // ZLibStream.Read does not accept Span<byte> directly on all targets.
-            var remaining = dest.Length - written;
-            var buf = new byte[Math.Min(remaining, 81920)]; // 80 KB chunks
-            var read = zlib.Read(buf, 0, buf.Length);
+            var read = zlib.Read(dest[written..]);
             if (read == 0) break;
-            buf.AsSpan(0, read).CopyTo(dest[written..]);
             written += read;
         }
     }
