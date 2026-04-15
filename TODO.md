@@ -77,9 +77,54 @@ Benchmark suite in `benchmarks/SharpAstro.Fonts.Benchmarks/`.
   layer. Consider compositing-in-place.
 - **PNG decode** in CBDT — `StbImageSharp.ImageResult.FromMemory`
   takes `byte[]`; we `.ToArray()` the slice. Check for a span overload.
+- **WOFF1 zlib decompression** — currently uses `MemoryStream` +
+  `ZLibStream.Read(Span<byte>)`, which requires one `.ToArray()` of
+  the compressed span to satisfy the `Stream` input. No span-based
+  zlib API in the .NET 10 BCL. Three options; see "Deferred decisions"
+  below. Low-priority — WOFF1 load is a cold path.
 
 None of these are blocking — the immutable / lock-free design is the
 non-negotiable invariant; performance is a knob to turn after.
+
+## Deferred decisions
+
+### WOFF1 zlib: wait for .NET 11 span API
+
+**Decision:** wait. Revisit when `net11.0` ships.
+
+`BrotliDecoder.TryDecompress(ReadOnlySpan<byte>, Span<byte>, out int)` gave
+us a zero-copy pure-span Brotli path for WOFF2 (already applied in
+`Woff2Reader.cs`). The matching zlib API is approved but not yet
+shipped:
+
+- [dotnet/runtime#62113](https://github.com/dotnet/runtime/issues/62113) —
+  API proposal for `ZLibDecoder` / `DeflateDecoder` / `GZipDecoder`.
+  Status: `api-approved`, milestone 11.0.0, `in-pr`.
+- [dotnet/runtime#123145](https://github.com/dotnet/runtime/pull/123145) —
+  Implementation PR. Status: `CHANGES_REQUESTED`. Functionally complete,
+  backed by the same zlib-ng native the current `ZLibStream` uses.
+
+When it ships, the swap in `WoffReader.DecompressZlib` is a one-liner,
+symmetric to the Brotli fix — no `MemoryStream`, no `.ToArray()`.
+
+### Alternatives considered (and why not now)
+
+1. **Copy from dotnet/runtime** — rejected. The managed C# files are
+   MIT but they P/Invoke into the native `CompressionNative` /
+   zlib-ng shared library. Not pure managed; can't just vendor the C#.
+
+2. **Vendor StbImageSharp's inflate** (`StbImage.Generated.Zlib.cs`,
+   ~550 lines, public domain, AOT-safe). Technically viable — we
+   already transitively depend on StbImageSharp for CBDT PNG decode.
+   Rejected for now because:
+   - Uses `unsafe` pointer arithmetic (style convention: no unsafe in
+     our own code; `AllowUnsafeBlocks` not set on `SharpAstro.Fonts.csproj`)
+   - WOFF1 load is not a hot path in benchmarks
+   - .NET 11 will ship the proper API soon
+
+3. **SharpZipLib's managed inflate** — MIT, pure managed, no unsafe,
+   ~1500-3000 lines across 6-8 files. Larger footprint than StbSharp
+   and needs a span-adapter shim. Overkill for a cold-path fix.
 
 ## Test coverage backlog
 
