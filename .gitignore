@@ -10,3 +10,4 @@ TestResults/
 *.coverage
 *.coveragexml
 artifacts/
+BenchmarkDotNet.Artifacts/
