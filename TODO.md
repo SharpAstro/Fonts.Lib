@@ -126,9 +126,61 @@ symmetric to the Brotli fix — no `MemoryStream`, no `.ToArray()`.
    ~1500-3000 lines across 6-8 files. Larger footprint than StbSharp
    and needs a span-adapter shim. Overkill for a cold-path fix.
 
+## SDF quality backlog
+
+Items derived from the Acko ESDT article
+(<https://acko.net/blog/subpixel-distance-transform>). Most of the
+article does **not** apply: ESDT exists to patch a binary-bitmap → EDT
+pipeline, and `SdfRasterizer.Rasterize` already computes analytic
+distance from each pixel center to the flattened path edges, so the
+gray-pixel / subpixel-offset / commutativity errors Acko corrects do
+not arise. The list below is the subset that *would* still be a real
+improvement.
+
+### Asymmetric zero level
+
+`SdfRasterizer.cs:104-109` (and the byte path at `:172-176`) maps
+`[-spread, +spread]` symmetrically to `[0, 1]` with edge at 0.5.
+Acko argues for placing zero at ~75% gray since dilation/outline is
+more common than contraction. With `spread=4` and 8-bit storage, that
+trades inside-precision for ~2× outline range. Worth doing only once
+we actually outline/glow text (currently we don't). Cross-cuts the
+shader threshold in `SdlVulkan.Renderer/VkPipelineSet.cs:160`.
+
+### Adaptive raster size
+
+`SdlVulkan.Renderer/VkSdfFontAtlas.cs:37` hardcodes
+`SdfRasterSize = 128f` for every glyph. Acko's heuristic is
+`1.5 × display size, rounded up to next power of two`. Fixed-size is
+simpler and atlas-friendly; the cost is curve facets becoming visible
+at display sizes ≫ 128 px, since `EdgeCollector`'s flatness tolerance
+is set in raster-pixel units. Lives entirely in
+`SdlVulkan.Renderer`, not Fonts.Lib — listed here for visibility.
+
+### Ink-bleed simulation at small sizes
+
+Optional aesthetic: 0.25 px outward bleed at ≥32 px display size,
+tapered to 0 below. Implementable as a bias on the smoothstep
+threshold in the SDF fragment shader
+(`SdlVulkan.Renderer/VkPipelineSet.cs:149-162`) keyed on quad scale.
+Not the same thing as the recent `ink-left baseline` work, which is
+positional. Purely visual; defer until someone complains about
+small-text crispness.
+
+### Already correct
+
+- **`fwidth`-based AA band** — `VkPipelineSet.cs:159` uses
+  `fwidth(dist)`, which absorbs both texel size and on-screen quad
+  scale automatically. Matches Acko's "GPU coordinates of SDF texture
+  pixels" recommendation.
+- **Bilinear sampler + `R8_Unorm`** — `VkSdfFontAtlas.cs:374-389`,
+  canonical SDF sample-side setup.
+- **Curve handling** — analytic distance to flattened segments, not
+  to a binary mask. The whole article's premise (recovering precision
+  lost in binarization) does not apply.
+
 ## Test coverage backlog
 
 - **Composite glyphs in variable fonts** (e.g. `é` in Roboto Flex) —
   visual regression baseline for diacritic positioning at non-default axes.
-- **TTC (TrueType Collection)** loading — already supported but untested.
 - **Bidirectional / RTL text fixtures** — Arabic / Hebrew cmap coverage.

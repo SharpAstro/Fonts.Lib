@@ -397,14 +397,66 @@ public sealed class OpenTypeFont
     }
 
     /// <summary>
-    /// Load a font from raw SFNT bytes. The byte array is wrapped as
-    /// <see cref="ReadOnlyMemory{Byte}"/> and retained — do not mutate it
-    /// after passing in.
+    /// Load a single font from raw SFNT or TTC bytes. The byte array is
+    /// wrapped as <see cref="ReadOnlyMemory{Byte}"/> and retained — do not
+    /// mutate it after passing in.
+    ///
+    /// <para>If the buffer starts with the TTC 'ttcf' magic, the
+    /// <paramref name="faceIndex"/>-th face from the collection is loaded
+    /// (default: face 0). For a plain SFNT, <paramref name="faceIndex"/>
+    /// must be 0.</para>
     /// </summary>
-    public static OpenTypeFont Load(byte[] data, int faceOffset = 0)
-        => Load(new ReadOnlyMemory<byte>(data), faceOffset);
+    public static OpenTypeFont Load(byte[] data, int faceIndex = 0)
+        => Load(new ReadOnlyMemory<byte>(data), faceIndex);
 
-    public static OpenTypeFont Load(ReadOnlyMemory<byte> data, int faceOffset = 0)
+    /// <summary>
+    /// Load every face from a TTC, or wrap a plain SFNT as a single-element
+    /// array. Faces share the underlying byte buffer (zero-copy) — they
+    /// each parse their own table directory at their respective offsets.
+    /// </summary>
+    public static OpenTypeFont[] LoadAll(byte[] data)
+        => LoadAll(new ReadOnlyMemory<byte>(data));
+
+    /// <summary>
+    /// Load every face from a TTC, or wrap a plain SFNT as a single-element
+    /// array.
+    /// </summary>
+    public static OpenTypeFont[] LoadAll(ReadOnlyMemory<byte> data)
+    {
+        var span = data.Span;
+        if (!Tables.Sfnt.TtcHeader.IsTtc(span))
+            return [LoadAtOffset(data, 0)];
+
+        var ttc = Tables.Sfnt.TtcHeader.Parse(span);
+        var faces = new OpenTypeFont[ttc.NumFonts];
+        for (var i = 0; i < ttc.NumFonts; i++)
+            faces[i] = LoadAtOffset(data, (int)ttc.OffsetTable[i]);
+        return faces;
+    }
+
+    public static OpenTypeFont Load(ReadOnlyMemory<byte> data, int faceIndex = 0)
+    {
+        var span = data.Span;
+        // TTC: dispatch to the right face's offset table. The face's tables are
+        // referenced by offsets *from the start of the file* (not relative to
+        // its own offset table) — same as standalone SFNT — so the existing
+        // table parsers Just Work without any offset rebasing.
+        if (Tables.Sfnt.TtcHeader.IsTtc(span))
+        {
+            var ttc = Tables.Sfnt.TtcHeader.Parse(span);
+            if ((uint)faceIndex >= (uint)ttc.NumFonts)
+                throw new ArgumentOutOfRangeException(nameof(faceIndex),
+                    $"TTC has {ttc.NumFonts} face(s); requested index {faceIndex} is out of range.");
+            return LoadAtOffset(data, (int)ttc.OffsetTable[faceIndex]);
+        }
+
+        if (faceIndex != 0)
+            throw new ArgumentOutOfRangeException(nameof(faceIndex),
+                $"Plain SFNT has only one face (index 0); requested index {faceIndex}.");
+        return LoadAtOffset(data, 0);
+    }
+
+    private static OpenTypeFont LoadAtOffset(ReadOnlyMemory<byte> data, int faceOffset)
     {
         var span = data.Span;
         var dir = SfntDirectory.Parse(span, faceOffset);
@@ -524,7 +576,25 @@ public sealed class OpenTypeFont
             kern, gpos, cvtFunits, fpgm, prep, normCoords, vhea, vmtx);
     }
 
-    /// <summary>Convenience: load from a file path.</summary>
+    /// <summary>
+    /// Convenience: load a single face from a file path. If the file is a
+    /// TTC, picks face 0. Use <see cref="LoadFromFile(string, int)"/> to
+    /// pick a specific face, or <see cref="LoadAllFromFile"/> to enumerate.
+    /// </summary>
     public static OpenTypeFont LoadFromFile(string path)
         => Load(File.ReadAllBytes(path));
+
+    /// <summary>
+    /// Load a specific face from a TTC file (or a plain SFNT, in which case
+    /// <paramref name="faceIndex"/> must be 0).
+    /// </summary>
+    public static OpenTypeFont LoadFromFile(string path, int faceIndex)
+        => Load(File.ReadAllBytes(path), faceIndex);
+
+    /// <summary>
+    /// Load every face from a TTC file (or wrap a plain SFNT as a
+    /// single-element array). Faces share the read-only byte buffer.
+    /// </summary>
+    public static OpenTypeFont[] LoadAllFromFile(string path)
+        => LoadAll(File.ReadAllBytes(path));
 }
