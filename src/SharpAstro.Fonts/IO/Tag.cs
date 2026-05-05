@@ -73,4 +73,6 @@ internal static class Tags
     public static readonly Tag Vvar = Tag.Parse("VVAR");
     /// <summary>'cvar' — CVT Variations table for variable TrueType hinting.</summary>
     public static readonly Tag Cvar = Tag.Parse("cvar");
+    /// <summary>'MATH' — math typesetting (constants, glyph variants, assembly recipes).</summary>
+    public static readonly Tag Math = Tag.Parse("MATH");
 }

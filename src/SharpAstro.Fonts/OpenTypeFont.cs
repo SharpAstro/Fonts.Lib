@@ -81,6 +81,12 @@ public sealed class OpenTypeFont
     internal KernTable? Kern { get; }
     internal GposTable? Gpos { get; }
 
+    /// <summary>OpenType MATH table. Present only on math fonts (STIX Two
+    /// Math, Latin Modern Math, Cambria Math, etc.); null on general-purpose
+    /// fonts. When present, exposes per-glyph stretch recipes and the global
+    /// math constants needed for proper TeX-style layout.</summary>
+    public Tables.OpenTypeMath.MathTable? Math { get; }
+
     /// <summary>Normalized axis coordinates for the current variation instance.
     /// Empty for non-variable fonts; all-zeros for the default instance.</summary>
     internal ReadOnlySpan<float> NormalizedCoords => _normalizedCoords;
@@ -128,7 +134,8 @@ public sealed class OpenTypeFont
         KernTable? kern, GposTable? gpos,
         ushort[]? cvtFunits, byte[]? fpgm, byte[]? prep,
         float[] normalizedCoords,
-        VheaTable? vhea, VmtxTable? vmtx)
+        VheaTable? vhea, VmtxTable? vmtx,
+        Tables.OpenTypeMath.MathTable? math)
     {
         Directory = directory;
         Head = head;
@@ -154,6 +161,7 @@ public sealed class OpenTypeFont
         Cvar = cvar;
         Kern = kern;
         Gpos = gpos;
+        Math = math;
         CvtFunits = cvtFunits;
         Fpgm = fpgm;
         Prep = prep;
@@ -206,7 +214,7 @@ public sealed class OpenTypeFont
 
         return new OpenTypeFont(Directory, Head, Maxp, Cmap, Hhea, Hmtx, Loca, Glyf,
             Cff, Colr, Cpal, Cblc, Cbdt, Fvar, Avar, Gvar, Hvar, Mvar, Vvar, Cvar,
-            Kern, Gpos, CvtFunits, Fpgm, Prep, norm, Vhea, Vmtx);
+            Kern, Gpos, CvtFunits, Fpgm, Prep, norm, Vhea, Vmtx, Math);
     }
 
     /// <summary>True when the active variation is non-default (any axis ≠ 0 normalized).</summary>
@@ -547,6 +555,10 @@ public sealed class OpenTypeFont
         if (dir.TryGet(Tags.Gpos, out var gposRec))
             gpos = GposTable.Parse(gposRec.Slice(span));
 
+        Tables.OpenTypeMath.MathTable? math = null;
+        if (dir.TryGet(Tags.Math, out var mathRec))
+            math = Tables.OpenTypeMath.MathTable.Parse(mathRec.Slice(span));
+
         VheaTable? vhea = null;
         VmtxTable? vmtx = null;
         if (dir.TryGet(Tags.Vhea, out var vheaRec))
@@ -573,7 +585,7 @@ public sealed class OpenTypeFont
 
         return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf,
             cff, colr, cpal, cblc, cbdt, fvar, avar, gvar, hvar, mvar, vvar, cvar,
-            kern, gpos, cvtFunits, fpgm, prep, normCoords, vhea, vmtx);
+            kern, gpos, cvtFunits, fpgm, prep, normCoords, vhea, vmtx, math);
     }
 
     /// <summary>
