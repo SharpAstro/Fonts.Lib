@@ -258,6 +258,35 @@ public sealed class OpenTypeFont
         => Cmap.GetGlyphIdHinted(codepoint, charCode, hint, NumGlyphs);
 
     /// <summary>
+    /// Look up the glyph id for the styled variant of <paramref name="codepoint"/>
+    /// — italic <c>F</c>, bold lower-case omega, double-struck N, etc. —
+    /// via the Unicode "Mathematical Alphanumeric Symbols" block
+    /// (U+1D400–U+1D7FF) and the letter-like-symbols holes at U+2100–U+214F.
+    ///
+    /// <para>The lookup is two stages: <see cref="MathAlphanumerics.MapCodepoint"/>
+    /// produces the styled codepoint (or null if no Unicode mapping exists
+    /// for the pair — italic digits, Fraktur Greek, and similar gaps),
+    /// then this method consults the font's preferred Unicode cmap.
+    /// Returns 0 when either stage misses, signalling the caller to fall
+    /// back to <see cref="GetGlyphId(uint)"/> on the original codepoint.</para>
+    ///
+    /// <para>Practical coverage: most modern math fonts (STIX Two Math,
+    /// Latin Modern Math, Cambria Math, Asana Math) have the entire
+    /// alphanumerics block in their cmap. Body-text fonts (DejaVu,
+    /// Roboto, Source Sans) typically don't, and this method returns 0
+    /// for them — the consumer falls back to the upright glyph. This is
+    /// the "fallback to U+1D4xx" path: no GSUB feature application is
+    /// attempted, since math-font support is essentially universal at
+    /// the cmap level for the alphanumerics block.</para>
+    /// </summary>
+    public uint GetMathVariantGlyphId(uint codepoint, MathStyle style)
+    {
+        var mapped = MathAlphanumerics.MapCodepoint(codepoint, style);
+        if (mapped is null) return 0u;
+        return GetGlyphId(mapped.Value);
+    }
+
+    /// <summary>
     /// Decode a TrueType outline. Throws if this font is CFF-flavored — use
     /// <see cref="DrawGlyph"/> or <see cref="RenderGlyph"/> for format-agnostic
     /// rendering. Returns <see cref="Outline.Empty"/> for glyphs with no
