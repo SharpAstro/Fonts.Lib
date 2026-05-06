@@ -287,6 +287,28 @@ public sealed class OpenTypeFont
     }
 
     /// <summary>
+    /// Return the corner kern (FUnits) for <paramref name="codepoint"/>
+    /// at correction height <paramref name="heightFU"/>, evaluated on
+    /// the requested <paramref name="corner"/>'s step function. Used
+    /// to position sub/superscripts under a slanted base's actual
+    /// slope — italic letters and especially big integrals — where
+    /// the global italic correction is too coarse. Returns 0 when the
+    /// font has no MATH table, no <c>MathGlyphInfo</c> subtable, no
+    /// kern coverage for this glyph, or no data for this specific
+    /// corner. Caller should treat 0 as "no corner adjustment" and
+    /// fall back to <c>MathItalicsCorrection</c> (positive shift for
+    /// the right corners) or zero (left corners) as appropriate.
+    /// </summary>
+    public Tables.OpenTypeMath.MathKern? GetMathCornerKern(uint codepoint, Tables.OpenTypeMath.MathKernCorner corner)
+    {
+        var info = Math?.GlyphInfo;
+        if (info is null) return null;
+        var gid = GetGlyphId(codepoint);
+        if (gid == 0) return null;
+        return info.GetKernInfo((ushort)gid)?.GetCorner(corner);
+    }
+
+    /// <summary>
     /// Decode a TrueType outline. Throws if this font is CFF-flavored — use
     /// <see cref="DrawGlyph"/> or <see cref="RenderGlyph"/> for format-agnostic
     /// rendering. Returns <see cref="Outline.Empty"/> for glyphs with no

@@ -82,4 +82,31 @@ public sealed record MathKernInfoRecord(
     MathKern? TopRight,
     MathKern? TopLeft,
     MathKern? BottomRight,
-    MathKern? BottomLeft);
+    MathKern? BottomLeft)
+{
+    /// <summary>Look up the kern subtable for one corner. Returns null
+    /// when this glyph has no data for that specific corner — the
+    /// caller should fall back (zero kern, or italic correction).</summary>
+    public MathKern? GetCorner(MathKernCorner corner) => corner switch
+    {
+        MathKernCorner.TopRight => TopRight,
+        MathKernCorner.TopLeft => TopLeft,
+        MathKernCorner.BottomRight => BottomRight,
+        MathKernCorner.BottomLeft => BottomLeft,
+        _ => null,
+    };
+}
+
+/// <summary>One of the four corners of a math base glyph for sub/super
+/// kerning. <see cref="TopRight"/> and <see cref="BottomRight"/> drive
+/// post-script placement (the common case — sup goes top-right, sub
+/// bottom-right). <see cref="TopLeft"/> / <see cref="BottomLeft"/>
+/// drive pre-script placement (rare; right-to-left math, or specific
+/// notations that anchor scripts on the left side of the base).</summary>
+public enum MathKernCorner
+{
+    TopRight,
+    TopLeft,
+    BottomRight,
+    BottomLeft,
+}
