@@ -202,6 +202,94 @@ public sealed class MathTableTests
     }
 
     /// <summary>
+    /// Round-trip the MathGlyphInfo subtable: italics correction and
+    /// top-accent attachment for glyphs 100 and 102, an extended-shape
+    /// glyph 200, and a corner kern (top-right only) on glyph 100.
+    /// Verifies all four sub-subtables parse together and that absent
+    /// glyphs return the documented "no value" answers.
+    /// </summary>
+    [Fact]
+    public void Parse_GlyphInfo_AllFourSubtables()
+    {
+        var bytes = BuildMathTableWithGlyphInfo(
+            italics: [(100, 50), (102, 80)],
+            topAccent: [(100, 300), (102, 450)],
+            extendedShape: [200],
+            // Kern on glyph 100, top-right corner: at correction height 0
+            // the kern is +20 FU; above 500 it falls off to 0.
+            kernGlyph: 100,
+            topRightHeights: [0, 500],
+            topRightKernValues: [20, 10, 0]);
+
+        var math = MathTable.Parse(bytes);
+        var info = math.GlyphInfo;
+        info.ShouldNotBeNull();
+
+        info!.GetItalicsCorrection(100).ShouldBe((short)50);
+        info.GetItalicsCorrection(102).ShouldBe((short)80);
+        info.GetItalicsCorrection(101).ShouldBe((short)0);   // not in coverage → 0
+
+        info.GetTopAccentAttachment(100).ShouldBe((short)300);
+        info.GetTopAccentAttachment(102).ShouldBe((short)450);
+        info.GetTopAccentAttachment(101).ShouldBeNull();      // not in coverage → null
+
+        info.IsExtendedShape(200).ShouldBeTrue();
+        info.IsExtendedShape(201).ShouldBeFalse();
+
+        var kerns = info.GetKernInfo(100);
+        kerns.ShouldNotBeNull();
+        kerns!.TopRight.ShouldNotBeNull();
+        kerns.TopLeft.ShouldBeNull();
+        kerns.BottomRight.ShouldBeNull();
+        kerns.BottomLeft.ShouldBeNull();
+        // Step-function: h ≤ 0 → 20, h ≤ 500 → 10, otherwise 0.
+        kerns.TopRight!.Lookup(-100).ShouldBe((short)20);
+        kerns.TopRight.Lookup(0).ShouldBe((short)20);
+        kerns.TopRight.Lookup(100).ShouldBe((short)10);
+        kerns.TopRight.Lookup(500).ShouldBe((short)10);
+        kerns.TopRight.Lookup(501).ShouldBe((short)0);
+
+        info.GetKernInfo(99).ShouldBeNull();
+    }
+
+    /// <summary>
+    /// When the MATH table omits MathGlyphInfo (offset 0), the parser
+    /// produces a null <see cref="MathTable.GlyphInfo"/> rather than a
+    /// throw or a silently-empty record. Mirrors how most non-math fonts
+    /// ship the table.
+    /// </summary>
+    [Fact]
+    public void Parse_GlyphInfoAbsent_PropertyIsNull()
+    {
+        var bytes = BuildMinimalMathTable(0, 0, 0, 0);
+        var math = MathTable.Parse(bytes);
+        math.GlyphInfo.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Real-font smoke check: DejaVu Sans's bundled MATH table should
+    /// either omit MathGlyphInfo entirely (older builds) or, if present,
+    /// answer parsing without throwing. We don't pin specific glyph IDs —
+    /// DejaVu's coverage may shift across releases — but we do require
+    /// the API contract: lookups for an out-of-coverage glyph return
+    /// 0 / null / false, never throw.
+    /// </summary>
+    [Fact]
+    public void DejaVuSans_GlyphInfo_IfPresent_HasContractuallyCorrectMisses()
+    {
+        var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.DejaVuSans));
+        var info = font.Math!.GlyphInfo;
+        if (info is null) return; // older builds may not include the subtable
+
+        // A glyph id we know isn't in coverage (well past DejaVu's last id).
+        const ushort outOfRange = 60_000;
+        info.GetItalicsCorrection(outOfRange).ShouldBe((short)0);
+        info.GetTopAccentAttachment(outOfRange).ShouldBeNull();
+        info.IsExtendedShape(outOfRange).ShouldBeFalse();
+        info.GetKernInfo(outOfRange).ShouldBeNull();
+    }
+
+    /// <summary>
     /// MATH header rejects unknown major versions — guards against version-2+
     /// table layouts being misparsed as v1.
     /// </summary>
@@ -384,6 +472,124 @@ public sealed class MathTableTests
     {
         w.I16(value);
         w.U16(0); // device-table offset (unused)
+    }
+
+    /// <summary>
+    /// Build a MATH table that exercises every <c>MathGlyphInfo</c>
+    /// sub-subtable: italics correction, top-accent attachment,
+    /// extended-shape coverage, and (top-right only) corner kerning.
+    /// MathConstants is filled with zeros and MathVariants is omitted.
+    /// </summary>
+    private static byte[] BuildMathTableWithGlyphInfo(
+        (ushort glyphId, short value)[] italics,
+        (ushort glyphId, short value)[] topAccent,
+        ushort[] extendedShape,
+        ushort kernGlyph,
+        short[] topRightHeights,
+        short[] topRightKernValues)
+    {
+        if (topRightKernValues.Length != topRightHeights.Length + 1)
+            throw new ArgumentException("kern values must have length heights+1");
+
+        const int constantsOffset = 10;
+        const int constantsSize = 214;
+        const int glyphInfoOffset = constantsOffset + constantsSize;
+
+        // ----- Build the MathGlyphInfo subtable into its own buffer first
+        // so we can compute internal offsets cleanly. -----
+        var gi = new BeWriter();
+
+        // Sub-subtable byte sizes (computed below). Header is 4 ushorts = 8.
+        const int giHeaderSize = 8;
+
+        // ItalicsCorrectionInfo: 2 (coverageOffset) + 2 (count) + N*4 (MVRs)
+        //                       + coverageBytes.
+        var italicsHeaderSize = 4 + italics.Length * 4;
+        var italicsCoverageBytes = BuildCoverage(1, italics.Select(t => t.glyphId).ToArray());
+        var italicsSubSize = italicsHeaderSize + italicsCoverageBytes.Length;
+
+        // TopAccentAttachment: same shape as italics correction.
+        var topAccentHeaderSize = 4 + topAccent.Length * 4;
+        var topAccentCoverageBytes = BuildCoverage(1, topAccent.Select(t => t.glyphId).ToArray());
+        var topAccentSubSize = topAccentHeaderSize + topAccentCoverageBytes.Length;
+
+        // ExtendedShapeCoverage: bare coverage table.
+        var extendedShapeBytes = BuildCoverage(1, extendedShape);
+
+        // MathKernInfo: 2 (coverageOffset) + 2 (count) + N*8 (records)
+        //               + coverageBytes + MathKern subtable bytes.
+        const int kernCount = 1;
+        const int kernInfoHeaderSize = 4 + kernCount * 8;
+        var kernCoverageBytes = BuildCoverage(1, [kernGlyph]);
+        // MathKern subtable: heightCount + heights[N]*4 + kerns[N+1]*4.
+        var kernSubtableSize = 2 + topRightHeights.Length * 4 + topRightKernValues.Length * 4;
+        var kernInfoSubSize = kernInfoHeaderSize + kernCoverageBytes.Length + kernSubtableSize;
+
+        // Layout within MGI:
+        //   [0..8)            header
+        //   [italicsAt..)     italics correction info subtable
+        //   [topAccentAt..)   top-accent attachment subtable
+        //   [extendedAt..)    extended shape coverage
+        //   [kernAt..)        kern info subtable
+        var italicsAt = giHeaderSize;
+        var topAccentAt = italicsAt + italicsSubSize;
+        var extendedAt = topAccentAt + topAccentSubSize;
+        var kernAt = extendedAt + extendedShapeBytes.Length;
+
+        // MGI header.
+        gi.U16((ushort)italicsAt);
+        gi.U16((ushort)topAccentAt);
+        gi.U16((ushort)extendedAt);
+        gi.U16((ushort)kernAt);
+
+        // ItalicsCorrectionInfo subtable (coverage at end of subtable).
+        gi.U16((ushort)italicsHeaderSize); // coverageOffset (relative to subtable start)
+        gi.U16((ushort)italics.Length);
+        foreach (var (_, v) in italics) WriteValueRecord(gi, v);
+        gi.Bytes(italicsCoverageBytes);
+
+        // TopAccentAttachment subtable.
+        gi.U16((ushort)topAccentHeaderSize);
+        gi.U16((ushort)topAccent.Length);
+        foreach (var (_, v) in topAccent) WriteValueRecord(gi, v);
+        gi.Bytes(topAccentCoverageBytes);
+
+        // Extended-shape coverage.
+        gi.Bytes(extendedShapeBytes);
+
+        // MathKernInfo subtable.
+        // Layout inside this subtable:
+        //   [0..2)               coverageOffset
+        //   [2..4)               kernCount
+        //   [4..4+8N)            kern info records (4 Offset16 each)
+        //   [coverageAt..)       coverage bytes
+        //   [kernSubtableAt..)   actual MathKern subtable
+        var kernCoverageAt = kernInfoHeaderSize;
+        var kernSubtableAt = kernCoverageAt + kernCoverageBytes.Length;
+        gi.U16((ushort)kernCoverageAt);
+        gi.U16(kernCount);
+        // One MathKernInfoRecord: top-right populated, others zero (= absent).
+        gi.U16((ushort)kernSubtableAt); // topRight
+        gi.U16(0);                       // topLeft
+        gi.U16(0);                       // bottomRight
+        gi.U16(0);                       // bottomLeft
+        gi.Bytes(kernCoverageBytes);
+        // MathKern subtable.
+        gi.U16((ushort)topRightHeights.Length);
+        foreach (var h in topRightHeights) WriteValueRecord(gi, h);
+        foreach (var k in topRightKernValues) WriteValueRecord(gi, k);
+
+        var giBytes = gi.ToArray();
+
+        // ----- Stitch together the full MATH table. -----
+        var w = new BeWriter();
+        w.U16(1); w.U16(0);
+        w.U16(constantsOffset);
+        w.U16(glyphInfoOffset);
+        w.U16(0);                             // no variants
+        for (var i = 0; i < constantsSize; i++) w.U8(0);
+        w.Bytes(giBytes);
+        return w.ToArray();
     }
 
     /// <summary>Tiny big-endian byte writer for the synthetic builders above.</summary>

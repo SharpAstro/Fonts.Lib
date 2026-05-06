@@ -20,6 +20,12 @@ public sealed class MathTable
 {
     public MathConstants Constants { get; }
 
+    /// <summary>Per-glyph metric extras (italics correction, top-accent
+    /// attachment, extended-shape coverage, corner kerning). Null when
+    /// the font's MATH table omits the <c>MathGlyphInfo</c> subtable —
+    /// most general-purpose fonts ship constants and variants only.</summary>
+    public MathGlyphInfo? GlyphInfo { get; }
+
     /// <summary>Minimum required overlap (FUnits) between adjacent assembly
     /// pieces when stacking <see cref="MathGlyphPart"/>s. Applies to both
     /// vertical and horizontal assemblies.</summary>
@@ -30,11 +36,13 @@ public sealed class MathTable
 
     private MathTable(
         MathConstants constants,
+        MathGlyphInfo? glyphInfo,
         ushort minConnectorOverlap,
         Dictionary<ushort, MathGlyphConstruction> vertical,
         Dictionary<ushort, MathGlyphConstruction> horizontal)
     {
         Constants = constants;
+        GlyphInfo = glyphInfo;
         MinConnectorOverlap = minConnectorOverlap;
         _vertical = vertical;
         _horizontal = horizontal;
@@ -71,14 +79,17 @@ public sealed class MathTable
                 $"Unsupported MATH table version {majorVersion}.{minorVersion} (expected 1.x).");
 
         var constantsOffset = r.ReadUInt16();
-        var glyphInfoOffset = r.ReadUInt16(); // not consumed yet — italic correction etc. live here
+        var glyphInfoOffset = r.ReadUInt16();
         var variantsOffset = r.ReadUInt16();
-        _ = glyphInfoOffset;
 
         if (constantsOffset == 0 || constantsOffset >= data.Length)
             throw new InvalidDataException("MATH table is missing the MathConstants subtable.");
 
         var constants = MathConstants.Parse(data[constantsOffset..]);
+
+        MathGlyphInfo? glyphInfo = null;
+        if (glyphInfoOffset != 0 && glyphInfoOffset < data.Length)
+            glyphInfo = MathGlyphInfo.Parse(data[glyphInfoOffset..]);
 
         var vertical = new Dictionary<ushort, MathGlyphConstruction>();
         var horizontal = new Dictionary<ushort, MathGlyphConstruction>();
@@ -89,7 +100,7 @@ public sealed class MathTable
             ParseVariants(data[variantsOffset..], vertical, horizontal, out minOverlap);
         }
 
-        return new MathTable(constants, minOverlap, vertical, horizontal);
+        return new MathTable(constants, glyphInfo, minOverlap, vertical, horizontal);
     }
 
     private static void ParseVariants(
@@ -125,7 +136,7 @@ public sealed class MathTable
         if (coverageOffset == 0 || coverageOffset >= variantsData.Length)
             return;
 
-        var glyphIds = ParseCoverage(variantsData[coverageOffset..]);
+        var glyphIds = ParseCoverageInternal(variantsData[coverageOffset..]);
         // Per spec the coverage length must equal the glyph count, but real
         // fonts have been seen to disagree in pathological cases — clamp
         // defensively rather than throw, so a buggy font doesn't take the
@@ -142,9 +153,11 @@ public sealed class MathTable
     /// <summary>
     /// Parse a Coverage table (Format 1 = explicit list, Format 2 = ranges).
     /// Returned glyph ids are in coverage order — the same order the parent
-    /// table uses to index into its parallel construction array.
+    /// table uses to index into its parallel construction array. Internal
+    /// so the sibling <see cref="MathGlyphInfo"/> parser in this same
+    /// namespace can reuse it without a cross-cutting refactor.
     /// </summary>
-    private static ushort[] ParseCoverage(ReadOnlySpan<byte> data)
+    internal static ushort[] ParseCoverageInternal(ReadOnlySpan<byte> data)
     {
         var r = new BigEndianReader(data);
         var format = r.ReadUInt16();
