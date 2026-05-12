@@ -19,9 +19,20 @@
     <InternalsVisibleTo Include="SharpAstro.Fonts.Tests" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- PNG decode for CBDT/sbix bitmap glyphs (MIT). -->
-    <PackageReference Include="StbImageSharp" />
+  <!--
+    PNG decode for CBDT/sbix bitmap glyphs. SharpAstro fork of StbImageSharp,
+    referenced as a sibling project when its working copy exists (fast in-tree
+    iteration on the fork itself) and falling back to the published NuGet
+    otherwise. Override: dotnet build -p:UseLocalStbImage=false.
+  -->
+  <PropertyGroup>
+    <UseLocalStbImage Condition="'$(UseLocalStbImage)' == '' AND Exists('..\..\..\StbImageSharp\src\StbImageSharp.csproj')">true</UseLocalStbImage>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalStbImage)' == 'true'">
+    <ProjectReference Include="..\..\..\StbImageSharp\src\StbImageSharp.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalStbImage)' != 'true'">
+    <PackageReference Include="SharpAstro.StbImage" />
   </ItemGroup>
 
   <ItemGroup>

@@ -12,7 +12,20 @@
     <PackageReference Include="Shouldly" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="xunit.v3" />
-    <PackageReference Include="StbImageSharp" />
+  </ItemGroup>
+
+  <!--
+    Mirror the sibling-detection from the lib csproj so tests pick the fork
+    project up when present (and inherit the package otherwise).
+  -->
+  <PropertyGroup>
+    <UseLocalStbImage Condition="'$(UseLocalStbImage)' == '' AND Exists('..\..\..\StbImageSharp\src\StbImageSharp.csproj')">true</UseLocalStbImage>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalStbImage)' == 'true'">
+    <ProjectReference Include="..\..\..\StbImageSharp\src\StbImageSharp.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalStbImage)' != 'true'">
+    <PackageReference Include="SharpAstro.StbImage" />
   </ItemGroup>
 
   <ItemGroup>
