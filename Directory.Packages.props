@@ -2,6 +2,9 @@
 
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Allow floating versions so SharpAstro.StbImage auto-picks up new CI
+         publishes from the StbImageSharp repo without manual bumps here. -->
+    <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -9,10 +12,10 @@
     <PackageVersion Include="Shouldly" Version="4.3.0" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
-    <!-- Phase 6: PNG decode for CBDT/sbix. SharpAstro fork (was StbImageSharp 2.30.15)
-         lives at https://github.com/SharpAstro/StbImageSharp, keeps the StbImageSharp
-         C# namespace so call sites are unchanged. -->
-    <PackageVersion Include="SharpAstro.StbImage" Version="2.30.11" />
+    <!-- Phase 6: PNG decode for CBDT/sbix. SharpAstro fork of StbImageSharp,
+         currently at the lockstep 3.0.x family version (no API change vs 2.30
+         on the decoder surface — Fonts.Lib only uses ImageResult.FromMemory). -->
+    <PackageVersion Include="SharpAstro.StbImage" Version="3.0.*" />
     <!-- Benchmarks -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.14.0" />
   </ItemGroup>
