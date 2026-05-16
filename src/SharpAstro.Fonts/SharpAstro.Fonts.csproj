@@ -9,7 +9,7 @@
     <IsAotCompatible>true</IsAotCompatible>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-    <VersionPrefix>1.3.0</VersionPrefix>
+    <VersionPrefix>1.4.0</VersionPrefix>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/SharpAstro/Fonts.Lib.git</RepositoryUrl>
@@ -26,10 +26,10 @@
     otherwise. Override: dotnet build -p:UseLocalStbImage=false.
   -->
   <PropertyGroup>
-    <UseLocalStbImage Condition="'$(UseLocalStbImage)' == '' AND Exists('..\..\..\StbImageSharp\src\StbImageSharp.csproj')">true</UseLocalStbImage>
+    <UseLocalStbImage Condition="'$(UseLocalStbImage)' == '' AND Exists('..\..\..\StbImageSharp\src\StbImageSharp\StbImageSharp.csproj')">true</UseLocalStbImage>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalStbImage)' == 'true'">
-    <ProjectReference Include="..\..\..\StbImageSharp\src\StbImageSharp.csproj" />
+    <ProjectReference Include="..\..\..\StbImageSharp\src\StbImageSharp\StbImageSharp.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalStbImage)' != 'true'">
     <PackageReference Include="SharpAstro.StbImage" />

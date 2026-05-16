@@ -57,7 +57,13 @@ public sealed class OpenTypeFont
     public SfntDirectory Directory { get; }
     public HeadTable Head { get; }
     public MaxpTable Maxp { get; }
-    public CmapTable Cmap { get; }
+    /// <summary>'cmap' character-to-glyph map. Optional: PDF subset fonts that
+    /// use Identity-H encoding may legitimately ship without a cmap, because the
+    /// PDF caller already supplies CID→GID directly (CID == GID under Identity-H)
+    /// and Unicode mapping comes from the PDF's separate /ToUnicode CMap. Callers
+    /// that don't need cmap lookup (e.g. GID-driven rendering with
+    /// <see cref="GlyphMapHint.CharCodeIsGID"/>) can still use such fonts.</summary>
+    public CmapTable? Cmap { get; }
     public HheaTable? Hhea { get; }
     public HmtxTable? Hmtx { get; }
     public VheaTable? Vhea { get; }
@@ -125,7 +131,7 @@ public sealed class OpenTypeFont
     private readonly CmapSubtable? _preferredCmap;
 
     private OpenTypeFont(SfntDirectory directory,
-        HeadTable head, MaxpTable maxp, CmapTable cmap,
+        HeadTable head, MaxpTable maxp, CmapTable? cmap,
         HheaTable? hhea, HmtxTable? hmtx, LocaTable? loca, GlyfTable? glyf,
         CffTable? cff, ColrTable? colr, CpalTable? cpal,
         CblcTable? cblc, CbdtTable? cbdt,
@@ -166,7 +172,7 @@ public sealed class OpenTypeFont
         Fpgm = fpgm;
         Prep = prep;
         _normalizedCoords = normalizedCoords;
-        _preferredCmap = cmap.PreferredUnicodeSubtable();
+        _preferredCmap = cmap?.PreferredUnicodeSubtable();
     }
 
     /// <summary>
@@ -247,7 +253,7 @@ public sealed class OpenTypeFont
     /// (IVS) and emoji variation sequences. Returns 0 if not mapped.
     /// </summary>
     public uint GetGlyphId(uint codepoint, uint variationSelector)
-        => Cmap.GetVariationGlyphId(codepoint, variationSelector);
+        => Cmap?.GetVariationGlyphId(codepoint, variationSelector) ?? 0u;
 
     /// <summary>
     /// Look up a glyph id for a PDF char-code using the strategy in
@@ -255,7 +261,18 @@ public sealed class OpenTypeFont
     /// non-Unicode lookup paths; see <see cref="GlyphMapHint"/>.
     /// </summary>
     public uint GetGlyphId(uint codepoint, uint charCode, GlyphMapHint hint)
-        => Cmap.GetGlyphIdHinted(codepoint, charCode, hint, NumGlyphs);
+    {
+        if (Cmap is not null)
+            return Cmap.GetGlyphIdHinted(codepoint, charCode, hint, NumGlyphs);
+        // PDF Identity-H subset whose cmap was stripped (CID==GID, Unicode lookup
+        // comes from the PDF's /ToUnicode). Honour the hint without a cmap.
+        return hint switch
+        {
+            GlyphMapHint.CharCodeIsGID or GlyphMapHint.EmbeddedSubset
+                => charCode > 0 && charCode < NumGlyphs ? charCode : 0u,
+            _ => 0u,
+        };
+    }
 
     /// <summary>
     /// Look up the glyph id for the styled variant of <paramref name="codepoint"/>
@@ -524,12 +541,15 @@ public sealed class OpenTypeFont
             throw new InvalidDataException("Missing required 'head' table.");
         if (!dir.TryGet(Tags.Maxp, out var maxpRec))
             throw new InvalidDataException("Missing required 'maxp' table.");
-        if (!dir.TryGet(Tags.Cmap, out var cmapRec))
-            throw new InvalidDataException("Missing required 'cmap' table.");
-
+        // cmap is optional: PDF embedded subset fonts (Identity-H encoding)
+        // routinely strip the cmap because CIDs map directly to GIDs and Unicode
+        // lookup comes from the PDF's /ToUnicode CMap rather than the font program.
+        // Such fonts are still usable via GlyphMapHint.CharCodeIsGID / EmbeddedSubset.
         var head = HeadTable.Parse(headRec.Slice(span));
         var maxp = MaxpTable.Parse(maxpRec.Slice(span));
-        var cmap = CmapTable.Parse(cmapRec.Slice(span));
+        CmapTable? cmap = null;
+        if (dir.TryGet(Tags.Cmap, out var cmapRec))
+            cmap = CmapTable.Parse(cmapRec.Slice(span));
 
         HheaTable? hhea = null;
         HmtxTable? hmtx = null;
