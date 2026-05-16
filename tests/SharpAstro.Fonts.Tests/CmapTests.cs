@@ -6,8 +6,9 @@ public class CmapTests
     public void DejaVuSans_HasUnicodeSubtable()
     {
         var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.DejaVuSans));
-        font.Cmap.Subtables.Count.ShouldBeGreaterThan(0);
-        font.Cmap.PreferredUnicodeSubtable().ShouldNotBeNull();
+        var cmap = font.Cmap.ShouldNotBeNull();
+        cmap.Subtables.Count.ShouldBeGreaterThan(0);
+        cmap.PreferredUnicodeSubtable().ShouldNotBeNull();
     }
 
     [Theory]
@@ -38,7 +39,8 @@ public class CmapTests
     public void SubsetFonts_HaveAtLeastOneSubtable(string fontFile)
     {
         var font = OpenTypeFont.LoadFromFile(Fixtures.Path(fontFile));
-        font.Cmap.Subtables.Count.ShouldBeGreaterThan(0);
+        var cmap = font.Cmap.ShouldNotBeNull();
+        cmap.Subtables.Count.ShouldBeGreaterThan(0);
     }
 
     [Theory]
@@ -50,7 +52,7 @@ public class CmapTests
     {
         var font = OpenTypeFont.LoadFromFile(Fixtures.Path(fontFile));
         // Format 14 is always platform=0 encoding=5.
-        var f14 = font.Cmap.Find(0, 5);
+        var f14 = font.Cmap.ShouldNotBeNull().Find(0, 5);
         f14.ShouldNotBeNull();
         f14.Format.ShouldBe((ushort)14);
     }

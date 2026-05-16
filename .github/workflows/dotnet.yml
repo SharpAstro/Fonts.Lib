@@ -7,11 +7,14 @@ on:
     branches: [ main ]
 
 env:
-  # Minor bump 1.2 -> 1.3: SharpAstro.StbImage transitive moves from the exact
-  # 2.30.11 pin to a floating 3.0.* (family lockstep). Fonts.Lib's public API
-  # is unchanged; the bump signals that the package now declares a 3.0.x
-  # StbImage transitive instead of 2.30.x.
-  VERSION_PREFIX: 1.3.${{ github.run_number }}
+  # Minor bump 1.3 -> 1.4: 'cmap' table is now optional. PDF Identity-H subset
+  # fonts routinely strip the cmap (CID maps directly to GID; Unicode lookup
+  # lives in the PDF's /ToUnicode CMap instead) and previously failed to load
+  # with "Missing required 'cmap' table". OpenTypeFont.Cmap is now nullable;
+  # GetGlyphId handles the null case for CharCodeIsGID / EmbeddedSubset hints.
+  # Source-compatible for callers that always go through GetGlyphId — direct
+  # readers of the Cmap property must accommodate nullability.
+  VERSION_PREFIX: 1.4.${{ github.run_number }}
   VERSION_REV: ${{ github.run_attempt }}
   VERSION_HASH: +${{ github.sha }}
   BUILD_CONF: Release

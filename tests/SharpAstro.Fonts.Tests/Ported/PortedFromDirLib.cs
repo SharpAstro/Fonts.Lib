@@ -74,9 +74,11 @@ public class PortedFromDirLib
         var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.XXTIIT_Arial_Subset));
         var sb = new StringBuilder();
         sb.AppendLine($"NumGlyphs={font.NumGlyphs}, UnitsPerEm={font.UnitsPerEm}");
-        sb.AppendLine($"Cmap subtables: {font.Cmap.Subtables.Count}");
-        foreach (var s in font.Cmap.Subtables)
-            sb.AppendLine($"  ({s.PlatformId}, {s.EncodingId}) format={s.Format}");
+        var cmap = font.Cmap;
+        sb.AppendLine($"Cmap subtables: {cmap?.Subtables.Count ?? 0}");
+        if (cmap is not null)
+            foreach (var s in cmap.Subtables)
+                sb.AppendLine($"  ({s.PlatformId}, {s.EncodingId}) format={s.Format}");
 
         sb.AppendLine("\n=== PUA U+F000+cc ===");
         for (uint cc = 1; cc <= 20; cc++)
