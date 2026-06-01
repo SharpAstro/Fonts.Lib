@@ -19,10 +19,10 @@
     project up when present (and inherit the package otherwise).
   -->
   <PropertyGroup>
-    <UseLocalStbImage Condition="'$(UseLocalStbImage)' == '' AND Exists('..\..\..\StbImageSharp\src\StbImageSharp.csproj')">true</UseLocalStbImage>
+    <UseLocalStbImage Condition="'$(UseLocalStbImage)' == '' AND Exists('..\..\..\StbImageSharp\src\StbImageSharp\StbImageSharp.csproj')">true</UseLocalStbImage>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalStbImage)' == 'true'">
-    <ProjectReference Include="..\..\..\StbImageSharp\src\StbImageSharp.csproj" />
+    <ProjectReference Include="..\..\..\StbImageSharp\src\StbImageSharp\StbImageSharp.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalStbImage)' != 'true'">
     <PackageReference Include="SharpAstro.StbImage" />
