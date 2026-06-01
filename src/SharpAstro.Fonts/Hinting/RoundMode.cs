@@ -45,9 +45,10 @@ internal static class Rounding
         _ => distance,
     };
 
-    // FreeType: a magic compensation argument is added to MDRP/MIRP distances
-    // before rounding (the Engine Compensation per CVT cut-in). For the Phase 8
-    // first cut we ignore engine compensation — passes through as 0.
+    // Known limitation: FreeType adds an "engine compensation" distance bias
+    // (per render mode) before rounding MDRP/MIRP distances. We don't — the bias
+    // is ~0 in grayscale / v40 mode (our only path), so it's immaterial here;
+    // revisit only for B&W hinting conformance. See TODO.md "Hinting".
 
     public static int RoundToGrid(int distance)
     {

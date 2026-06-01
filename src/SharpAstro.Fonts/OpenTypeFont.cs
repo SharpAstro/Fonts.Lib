@@ -416,9 +416,16 @@ public sealed class OpenTypeFont
     /// a per-glyph instruction stream the returned outline is unhinted but
     /// still scaled to pixel coordinates.
     ///
-    /// <para><b>Phase 8 status:</b> the interpreter currently implements only a
-    /// subset of hinting opcodes — output may differ slightly from FreeType's
-    /// hinted result until the remaining verbs land.</para>
+    /// <para><b>Status:</b> the interpreter implements essentially the full
+    /// TrueType instruction set (all push/arith/logic/round ops, MDRP/MIRP,
+    /// IP/SHP/SHC/SHZ/SHPIX, MSIRP/ALIGNRP, IUP, MIAP/MDAP, DELTAP/DELTAC,
+    /// SROUND/S45ROUND, CALL/LOOPCALL/FDEF/IDEF, GETINFO/INSTCTRL/SCANCTRL).
+    /// Output may still differ from FreeType in a few subtle areas — engine
+    /// compensation is not applied (immaterial in grayscale/v40 mode) and
+    /// phantom-point touched-flag handling is approximate (see TODO.md).
+    /// There is no FreeType conformance oracle yet, so accuracy is currently
+    /// unverified against ground truth. NOTE: the SDF path (<see cref="RenderSdf"/>)
+    /// is UNHINTED, so SDF-rendered text does not benefit from any of this.</para>
     /// </summary>
     public HintedOutline? LoadHintedOutline(uint glyphId, float pixelsPerEm)
     {

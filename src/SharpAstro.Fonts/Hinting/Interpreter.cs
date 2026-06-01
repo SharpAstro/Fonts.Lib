@@ -35,7 +35,10 @@ internal sealed class HintingSnapshot
 /// TrueType bytecode interpreter.
 ///
 /// <para>Implements the dispatch loop, operand stack, function table,
-/// graphics state, and the v40 opcodes needed for Phase 8 hinting.</para>
+/// graphics state, and essentially the full TrueType instruction set
+/// (v40 / grayscale interpretation). Known approximations vs FreeType:
+/// engine compensation (immaterial in grayscale) and phantom-point
+/// touched-flag handling — see TODO.md "Hinting".</para>
 ///
 /// <para><b>Usage:</b> build once per face via the primary constructor + fpgm +
 /// prep, then take a <see cref="HintingSnapshot"/>. For each glyph render,
@@ -1095,8 +1098,9 @@ internal sealed class Interpreter
                            anchorZone.CurY[anchorIdx] - anchorZone.OrgY[anchorIdx]);
         // SHZ shifts ALL points but doesn't touch them (per spec). For phantom
         // points at the end of zone 1 this matters; we still apply the shift.
-        // Skip the 4 phantom-point indices' "touched" effect — MovePoint sets
-        // touched flags. For this Phase 8 cut, cumulative effect is acceptable.
+        // Known limitation: per spec SHZ shifts without touching, but MovePoint
+        // sets touched flags. We don't special-case the 4 phantom points; the
+        // cumulative effect is acceptable in practice (see TODO.md "Hinting").
         for (var p = 0; p < z.PointCount; p++) MovePoint(z, p, dist);
     }
 
@@ -1257,11 +1261,10 @@ internal sealed class Interpreter
     /// </summary>
     private void ExecIup(bool xAxis)
     {
-        // Need contour ranges. Phase 8 first cut: derive from glyph zone's
-        // contour-end metadata, which Zone doesn't currently carry. Fall back
-        // to no-op if absent — IUP becomes a no-op for now and points stay at
-        // touched positions only. Wire-through provides the contour ends in
-        // the next iteration of HintingPipeline.
+        // Contour ends are supplied by HintingPipeline.SetGlyphContours just
+        // before RunGlyphProgram, so this runs for real glyph programs. _iupEnds
+        // is only null in the fpgm/prep context (no glyph; IUP isn't legal there)
+        // — guard and bail.
         if (_iupEnds is null) return;
 
         var z = _glyph;

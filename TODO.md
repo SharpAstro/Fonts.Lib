@@ -39,6 +39,30 @@ Listed by table / area.
   `dup`, `exch`, `index`, `roll`, `random`) silently consume args.
   Vanishingly rare in real glyph charstrings.
 
+### Hinting (TrueType bytecode)
+The interpreter implements essentially the full instruction set (push /
+arith / logic / round, MDRP/MIRP, IP/SHP/SHC/SHZ/SHPIX, MSIRP/ALIGNRP,
+IUP, MIAP/MDAP, DELTAP/DELTAC, SROUND/S45ROUND, CALL/LOOPCALL/FDEF/IDEF,
+GETINFO/INSTCTRL/SCANCTRL). It is interpreted in v40 / grayscale mode.
+Known approximations vs FreeType:
+- **Engine compensation** (the per-render-mode distance bias added before
+  rounding MDRP/MIRP) is not applied — ~0 in grayscale/v40, so immaterial
+  here; matters only for B&W conformance (`RoundMode.cs`).
+- **Phantom-point touched flags**: SHZ shifts phantom points via the same
+  `MovePoint` that sets touched flags, where the spec shifts without
+  touching. Cumulative effect acceptable in practice (`Interpreter.cs`).
+- **No FreeType conformance oracle.** `HintingFoundationTests` only checks
+  hinted width is within ~1 px; there is no per-point comparison against
+  FreeType, so hinting accuracy is unverified against ground truth. A
+  FreeType-reference harness is the prerequisite for any serious
+  hinting-fidelity work.
+- **Hinting does not reach the SDF render path.** `RenderSdf` builds the
+  distance field from the UNHINTED outline (`DrawGlyph`), and consumers
+  that render text as SDF (e.g. the pdf-viewer, `SdfTextThreshold = 0`)
+  therefore get no grid-fitting. Only the bitmap path (`RenderGlyphHinted`)
+  is hinted. Feeding hinted outlines into `RenderSdf` is an open experiment
+  (uncertain payoff — SDF undersamples tiny stems regardless).
+
 ## Out of scope
 
 These are NOT planned for SharpAstro.Fonts and would warrant a
