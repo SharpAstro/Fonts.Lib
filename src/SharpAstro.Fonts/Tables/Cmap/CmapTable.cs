@@ -28,6 +28,16 @@ public sealed class CmapTable
     /// Returns null if no Unicode subtable is found.
     /// </summary>
     public CmapSubtable? PreferredUnicodeSubtable()
+        // Falls back to the first subtable when there is no genuine Unicode one, for callers that
+        // just want *a* subtable. WARNING: that fallback is a char-code-keyed (1,0)/(3,0) cmap, so
+        // looking a *codepoint* up in it returns the wrong glyph (e.g. '×' U+00D7=215 hits the glyph
+        // at char-code 215). Codepoint-based callers must use <see cref="GenuineUnicodeSubtable"/>.
+        => GenuineUnicodeSubtable() ?? (Subtables.Count > 0 ? Subtables[0] : null);
+
+    /// <summary>The best *genuine* Unicode subtable (a real Unicode platform/encoding), or null if the
+    /// font has none — never the char-code-keyed fallback, so a codepoint lookup against the result is
+    /// always meaningful.</summary>
+    public CmapSubtable? GenuineUnicodeSubtable()
     {
         // Order by descending preference
         ReadOnlySpan<(ushort plat, ushort enc)> order =
@@ -38,7 +48,7 @@ public sealed class CmapTable
             foreach (var s in Subtables)
                 if (s.PlatformId == plat && s.EncodingId == enc)
                     return s;
-        return Subtables.Count > 0 ? Subtables[0] : null;
+        return null;
     }
 
     /// <summary>
@@ -90,16 +100,29 @@ public sealed class CmapTable
 
             case GlyphMapHint.EmbeddedSubset:
             {
-                var unicode = PreferredUnicodeSubtable();
+                // Genuine Unicode subtable ONLY. The PreferredUnicodeSubtable fallback is a
+                // char-code-keyed (1,0)/(3,0) cmap; looking a codepoint up there returns the wrong
+                // glyph when the codepoint collides with a char-code (e.g. '×' U+00D7 → char-code
+                // 0xD7's glyph). These subset fonts have no real Unicode cmap, so we drop straight to
+                // the char-code paths below, which map the PDF code through the embedded cmap.
+                var unicode = GenuineUnicodeSubtable();
                 var gid = unicode?.GetGlyphId(codepoint) ?? 0u;
                 if (gid != 0) return gid;
                 if (charCode > 0)
                 {
-                    // MS Symbol cmap with PUA offset.
                     var symbol = Find(3, 0); // (Windows, Symbol)
                     if (symbol is not null)
                     {
+                        // MS Symbol cmap, conventional PUA offset (U+F000+code) — e.g. Revit's
+                        // XXTIIT+Arial subset.
                         gid = symbol.GetGlyphId(0xF000 + charCode);
+                        if (gid != 0) return gid;
+                        // …and the RAW code: mPDF (and other CJK subsetters) write a (3,0) subtable
+                        // keyed by the raw 1-byte code, NOT PUA-offset, and CID != GID for these
+                        // subsets. Without this the glyph falls through to the wrong direct-GID below
+                        // (the garbled-CJK bug). Mac (1,0) stays skipped — it maps charCodes to wrong
+                        // GIDs in other subsets (Tahoma/ISOCPEUR); (3,0)-raw covers the CJK case.
+                        gid = symbol.GetGlyphId(charCode);
                         if (gid != 0) return gid;
                     }
                     // Direct GID fallback — Identity-style mapping in the subset.

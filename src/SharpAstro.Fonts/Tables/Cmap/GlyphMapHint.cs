@@ -14,9 +14,10 @@ public enum GlyphMapHint
     Auto = 0,
 
     /// <summary>
-    /// Embedded PDF subset font. Tries Unicode → MS Symbol PUA (codepoints
-    /// offset by U+F000) → direct GID. Skips Mac Roman, which tends to map
-    /// charCodes to wrong GIDs in subset fonts.
+    /// Embedded PDF subset font. Tries Unicode → MS Symbol (PUA offset U+F000+code,
+    /// then the raw code — mPDF CJK subsets key their (3,0) subtable by the raw 1-byte
+    /// code) → direct GID. Skips Mac Roman (1,0), which maps charCodes to wrong GIDs in
+    /// some subset fonts (Tahoma/ISOCPEUR).
     /// </summary>
     EmbeddedSubset,
 
