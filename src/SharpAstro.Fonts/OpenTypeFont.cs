@@ -241,11 +241,24 @@ public sealed class OpenTypeFont
     public ushort UnitsPerEm => Head.UnitsPerEm;
 
     /// <summary>
+    /// Gate a cmap-derived glyph id against the font's glyph count, returning
+    /// .notdef (0) for anything out of range. A malformed or subsetted cmap can
+    /// map a codepoint to an index past <see cref="NumGlyphs"/> — e.g. an
+    /// embedded PDF subset that retained the original font's char-code-keyed
+    /// cmap after the referenced glyphs were dropped (the
+    /// <see cref="Tables.Cmap.CmapTable.PreferredUnicodeSubtable"/> fallback).
+    /// There is no outline/charstring data for such an index, so it cannot be
+    /// rendered; returning 0 is the spec-correct fallback and, crucially, keeps
+    /// an out-of-range id from reaching <see cref="DrawGlyph"/>, which throws.
+    /// </summary>
+    private uint ValidGid(uint gid) => gid < NumGlyphs ? gid : 0u;
+
+    /// <summary>
     /// Look up a glyph id for a Unicode codepoint via the preferred Unicode
     /// cmap subtable. Returns 0 (.notdef) if not mapped.
     /// </summary>
     public uint GetGlyphId(uint codepoint)
-        => _preferredCmap?.GetGlyphId(codepoint) ?? 0u;
+        => ValidGid(_preferredCmap?.GetGlyphId(codepoint) ?? 0u);
 
     /// <summary>
     /// Look up a glyph id for a (base codepoint, variation selector) pair via
@@ -253,7 +266,7 @@ public sealed class OpenTypeFont
     /// (IVS) and emoji variation sequences. Returns 0 if not mapped.
     /// </summary>
     public uint GetGlyphId(uint codepoint, uint variationSelector)
-        => Cmap?.GetVariationGlyphId(codepoint, variationSelector) ?? 0u;
+        => ValidGid(Cmap?.GetVariationGlyphId(codepoint, variationSelector) ?? 0u);
 
     /// <summary>
     /// Look up a glyph id for a PDF char-code using the strategy in
@@ -263,7 +276,10 @@ public sealed class OpenTypeFont
     public uint GetGlyphId(uint codepoint, uint charCode, GlyphMapHint hint)
     {
         if (Cmap is not null)
-            return Cmap.GetGlyphIdHinted(codepoint, charCode, hint, NumGlyphs);
+            // GetGlyphIdHinted already gates its synthetic direct-GID fallbacks on
+            // numGlyphs, but its cmap-subtable returns are unchecked — re-gate here
+            // so a bogus subset cmap can't surface an out-of-range id either.
+            return ValidGid(Cmap.GetGlyphIdHinted(codepoint, charCode, hint, NumGlyphs));
         // PDF Identity-H subset whose cmap was stripped (CID==GID, Unicode lookup
         // comes from the PDF's /ToUnicode). Honour the hint without a cmap.
         return hint switch

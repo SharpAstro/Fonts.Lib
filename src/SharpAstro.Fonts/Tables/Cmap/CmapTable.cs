@@ -93,6 +93,15 @@ public sealed class CmapTable
     /// </summary>
     public uint GetGlyphIdHinted(uint codepoint, uint charCode, GlyphMapHint hint, ushort numGlyphs)
     {
+        // A cmap subtable can return a glyph id past the font's glyph count — broken
+        // PDF subsets do this routinely (their cmap is built for the full glyph layout
+        // but the embedded glyf/maxp were subsetted to fewer glyphs, so the upper
+        // codepoints map off the end). Such an id has no outline and must NOT be
+        // returned: treat it as a miss so the next strategy (e.g. the direct-GID
+        // fallback) gets a chance. Without this, an out-of-range cmap hit short-circuits
+        // the fallback and the glyph renders as .notdef.
+        bool InRange(uint gid) => gid != 0 && gid < numGlyphs;
+
         switch (hint)
         {
             case GlyphMapHint.CharCodeIsGID:
@@ -107,7 +116,7 @@ public sealed class CmapTable
                 // the char-code paths below, which map the PDF code through the embedded cmap.
                 var unicode = GenuineUnicodeSubtable();
                 var gid = unicode?.GetGlyphId(codepoint) ?? 0u;
-                if (gid != 0) return gid;
+                if (InRange(gid)) return gid;
                 if (charCode > 0)
                 {
                     var symbol = Find(3, 0); // (Windows, Symbol)
@@ -116,14 +125,14 @@ public sealed class CmapTable
                         // MS Symbol cmap, conventional PUA offset (U+F000+code) — e.g. Revit's
                         // XXTIIT+Arial subset.
                         gid = symbol.GetGlyphId(0xF000 + charCode);
-                        if (gid != 0) return gid;
+                        if (InRange(gid)) return gid;
                         // …and the RAW code: mPDF (and other CJK subsetters) write a (3,0) subtable
                         // keyed by the raw 1-byte code, NOT PUA-offset, and CID != GID for these
                         // subsets. Without this the glyph falls through to the wrong direct-GID below
                         // (the garbled-CJK bug). Mac (1,0) stays skipped — it maps charCodes to wrong
                         // GIDs in other subsets (Tahoma/ISOCPEUR); (3,0)-raw covers the CJK case.
                         gid = symbol.GetGlyphId(charCode);
-                        if (gid != 0) return gid;
+                        if (InRange(gid)) return gid;
                     }
                     // Direct GID fallback — Identity-style mapping in the subset.
                     if (charCode < numGlyphs) return charCode;
@@ -135,10 +144,10 @@ public sealed class CmapTable
             {
                 var unicode = PreferredUnicodeSubtable();
                 var gid = unicode?.GetGlyphId(codepoint) ?? 0u;
-                if (gid != 0) return gid;
+                if (InRange(gid)) return gid;
                 if (charCode > 0 && unicode is not null)
                     gid = unicode.GetGlyphId(charCode);
-                return gid;
+                return InRange(gid) ? gid : 0u;
             }
 
             case GlyphMapHint.Auto:
@@ -146,24 +155,24 @@ public sealed class CmapTable
             {
                 var unicode = PreferredUnicodeSubtable();
                 var gid = unicode?.GetGlyphId(codepoint) ?? 0u;
-                if (gid != 0) return gid;
+                if (InRange(gid)) return gid;
                 if (charCode == 0) return 0u;
                 var symbol = Find(3, 0);
                 if (symbol is not null)
                 {
                     gid = symbol.GetGlyphId(0xF000 + charCode);
-                    if (gid != 0) return gid;
+                    if (InRange(gid)) return gid;
                 }
                 var macRoman = Find(1, 0); // (Mac, Roman)
                 if (macRoman is not null)
                 {
                     gid = macRoman.GetGlyphId(charCode);
-                    if (gid != 0) return gid;
+                    if (InRange(gid)) return gid;
                 }
                 if (unicode is not null)
                 {
                     gid = unicode.GetGlyphId(charCode);
-                    if (gid != 0) return gid;
+                    if (InRange(gid)) return gid;
                 }
                 if (charCode < numGlyphs) return charCode;
                 return 0u;
