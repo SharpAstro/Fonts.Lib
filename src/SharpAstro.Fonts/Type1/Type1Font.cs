@@ -125,21 +125,59 @@ public sealed class Type1Font
         return _decryptedSubrsCache;
     }
 
+    /// <summary>
+    /// Cheap magic-byte test: does <paramref name="data"/> look like a Type 1 font program —
+    /// either a .pfb wrapper (<c>0x80</c> segment marker) or a raw Type 1 / .pfa stream (the form a
+    /// PDF <c>/FontFile</c> carries, starting with the <c>%!</c> PostScript comment)?
+    /// </summary>
+    public static bool IsType1(ReadOnlySpan<byte> data)
+        => data.Length >= 2
+           && ((data[0] == 0x80 && data[1] is 1 or 2 or 3)   // .pfb segment marker
+               || (data[0] == (byte)'%' && data[1] == (byte)'!')); // raw "%!PS-AdobeFont" / "%!FontType1"
+
+    /// <summary>
+    /// Load a Type 1 font from either a .pfb wrapper or a raw Type 1 program. A PDF <c>/FontFile</c>
+    /// stream is the raw form: clear-text PostScript up to the <c>eexec</c> token, then the
+    /// (binary or ASCII-hex) eexec-encrypted Private dict. We split on <c>eexec</c> rather than the
+    /// stream's <c>/Length1</c>/<c>/Length2</c> (which we don't have here) and let the shared tail
+    /// decrypt + parse, exactly like the .pfb path.
+    /// </summary>
+    public static Type1Font LoadType1(byte[] data)
+    {
+        if (PfbReader.IsPfb(data))
+            return LoadPfb(data);
+
+        var eexec = data.AsSpan().IndexOf("eexec"u8);
+        if (eexec < 0)
+            throw new InvalidDataException("Not a Type 1 font (no .pfb marker and no eexec token).");
+
+        var asciiEnd = eexec + 5;
+        var binStart = asciiEnd;
+        // The spec puts exactly one whitespace between "eexec" and the encrypted body; be lenient
+        // and skip a run (some producers emit CR LF).
+        while (binStart < data.Length && data[binStart] is 0x20 or 0x09 or 0x0D or 0x0A) binStart++;
+
+        return FromAsciiAndEexec(data.AsSpan(0, asciiEnd), data.AsSpan(binStart));
+    }
+
     /// <summary>Load from a .pfb byte stream.</summary>
     public static Type1Font LoadPfb(byte[] pfbData)
     {
         if (!PfbReader.IsPfb(pfbData))
             throw new InvalidDataException("Not a .pfb file (missing 0x80 marker).");
         var (asciiHeader, eexecBinary) = PfbReader.Read(pfbData);
-        var decrypted = EexecCipher.DecryptEexec(eexecBinary);
+        return FromAsciiAndEexec(asciiHeader, eexecBinary);
+    }
 
-        // The decrypted block is the "Private" dict (more PostScript text).
-        // The /CharStrings dict typically appears AFTER the eexec block in
-        // some old fonts, but for modern Type 1 it's INSIDE the decrypted
-        // section. Concatenate header + decrypted so the reader sees both.
+    // Decrypt the eexec section and parse the combined (clear header + decrypted Private dict)
+    // buffer. The /CharStrings + /Subrs live inside the decrypted block; /Encoding + /FontMatrix
+    // are in the clear header — concatenating gives the reader both in one pass.
+    private static Type1Font FromAsciiAndEexec(ReadOnlySpan<byte> asciiHeader, ReadOnlySpan<byte> eexecBinary)
+    {
+        var decrypted = EexecCipher.DecryptEexec(eexecBinary);
         var combined = new byte[asciiHeader.Length + decrypted.Length];
-        Array.Copy(asciiHeader, 0, combined, 0, asciiHeader.Length);
-        Array.Copy(decrypted, 0, combined, asciiHeader.Length, decrypted.Length);
+        asciiHeader.CopyTo(combined);
+        decrypted.CopyTo(combined.AsSpan(asciiHeader.Length));
 
         var reader = new PostScriptDictReader(combined);
         reader.Parse();
