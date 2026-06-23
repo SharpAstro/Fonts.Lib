@@ -35,6 +35,16 @@ internal sealed class Type1CharstringInterpreter
     private bool _contourOpen;
     private bool _terminated;
 
+    // OtherSubr scaffolding. callothersubr moves operands to the PostScript stack and pop reads them
+    // back; without this, flex (OtherSubrs 0/1/2) draws its 7 rmovetos as stray strokes and hint
+    // replacement (OtherSubr 3) calls the wrong subr — garbling any font that uses them (most non-CM
+    // Type 1 faces do). See "The Type 1 Font Format" §8 (Flex and Hint Replacement).
+    private readonly double[] _psStack = new double[StackSize];
+    private int _psSp;
+    private bool _flexing;
+    private readonly (float X, float Y)[] _flexPts = new (float, float)[8];
+    private int _flexCount;
+
     public delegate void SeacResolver(int adx, int ady, string baseChar, string accentChar);
     private readonly SeacResolver? _seac;
 
@@ -121,7 +131,7 @@ internal sealed class Type1CharstringInterpreter
                 _sp = 0;
                 break;
             case 4:  // vmoveto (dy)
-                MoveTo(_x, _y + (float)_stack[_sp - 1]);
+                DoMove(_x, _y + (float)_stack[_sp - 1]);
                 _sp = 0;
                 break;
             case 5:  // rlineto (dx dy)
@@ -141,13 +151,14 @@ internal sealed class Type1CharstringInterpreter
                           _stack[_sp - 3], _stack[_sp - 2], _stack[_sp - 1]);
                 _sp = 0;
                 break;
-            case 9:  // closepath
+            case 9:  // closepath — closes the subpath but, per the Type 1 spec, leaves the current point
+                     // UNCHANGED (unlike PostScript closepath, which repositions it to the start).
+                     // Resetting it to the start displaced every following rmoveto-addressed contour
+                     // (the i/j dot, accent marks, …) by the start→last-point delta — floating blobs.
                 if (_contourOpen)
                 {
                     _sink.Close();
                     _contourOpen = false;
-                    _x = _startX;
-                    _y = _startY;
                 }
                 _sp = 0;
                 break;
@@ -177,11 +188,11 @@ internal sealed class Type1CharstringInterpreter
                 _sp = 0;
                 break;
             case 21: // rmoveto (dx dy)
-                MoveTo(_x + (float)_stack[_sp - 2], _y + (float)_stack[_sp - 1]);
+                DoMove(_x + (float)_stack[_sp - 2], _y + (float)_stack[_sp - 1]);
                 _sp = 0;
                 break;
             case 22: // hmoveto (dx)
-                MoveTo(_x + (float)_stack[_sp - 1], _y);
+                DoMove(_x + (float)_stack[_sp - 1], _y);
                 _sp = 0;
                 break;
             case 30: // vhcurveto (dy1 dx2 dy2 dx3)
@@ -233,11 +244,11 @@ internal sealed class Type1CharstringInterpreter
                     _stack[_sp++] = b != 0 ? a / b : 0;
                 }
                 break;
-            case 16: // callothersubr — used by hinting scaffolding; ignore body, leave args
-                _sp = 0;
+            case 16: // callothersubr (arg1 … argn n othersubr#)
+                CallOtherSubr();
                 break;
-            case 17: // pop (push value from othersubr stack — we don't have one; push 0)
-                if (_sp < StackSize) _stack[_sp++] = 0;
+            case 17: // pop — move one value back from the PostScript stack to the operand stack
+                if (_sp < StackSize) _stack[_sp++] = _psSp > 0 ? _psStack[--_psSp] : 0;
                 break;
             case 33: // setcurrentpoint (x y) — used post-othersubr; absolute set
                 _x = (float)_stack[_sp - 2];
@@ -248,6 +259,78 @@ internal sealed class Type1CharstringInterpreter
                 _sp = 0;
                 break;
         }
+    }
+
+    // Handle `callothersubr`. The operand stack holds `arg1 … argn n othersubr#` (top = othersubr#).
+    // OtherSubrs 0–3 are the standard flex / hint-replacement helpers; their results are left on the
+    // PostScript stack for subsequent `pop`s. Unknown OtherSubrs pass their args straight through.
+    private void CallOtherSubr()
+    {
+        var subrNo = _sp > 0 ? (int)_stack[--_sp] : 0;
+        var nArgs = _sp > 0 ? (int)_stack[--_sp] : 0;
+        if (nArgs < 0) nArgs = 0;
+        if (nArgs > _sp) nArgs = _sp;
+
+        switch (subrNo)
+        {
+            case 1: // start flex — suppress the 7 rmovetos that follow; record them as control points
+                _flexing = true;
+                _flexCount = 0;
+                _sp -= nArgs;
+                break;
+            case 2: // flex point marker — the position was captured by the suppressed rmoveto
+                _sp -= nArgs;
+                break;
+            case 0: // end flex (args: flex-height end-x end-y) — emit the two collected curves
+                if (_flexCount >= 7)
+                {
+                    EmitCubicAbs(_flexPts[1], _flexPts[2], _flexPts[3]);
+                    EmitCubicAbs(_flexPts[4], _flexPts[5], _flexPts[6]);
+                }
+                _flexing = false;
+                // Return end-x/end-y for the following `pop pop setcurrentpoint` (pop yields x first).
+                var endY = nArgs >= 1 ? _stack[_sp - 1] : _y;
+                var endX = nArgs >= 2 ? _stack[_sp - 2] : _x;
+                _sp -= nArgs;
+                PsPush(endY);
+                PsPush(endX);
+                break;
+            case 3: // hint replacement — return the subr number for the following `pop callsubr`
+                var sn = nArgs >= 1 ? _stack[_sp - 1] : 3;
+                _sp -= nArgs;
+                PsPush(sn);
+                break;
+            default: // unknown — pass args through so subsequent pops retrieve them in order
+                for (var k = 0; k < nArgs; k++) PsPush(_stack[_sp - 1 - k]);
+                _sp -= nArgs;
+                break;
+        }
+    }
+
+    private void PsPush(double v)
+    {
+        if (_psSp < _psStack.Length) _psStack[_psSp++] = v;
+    }
+
+    // A moveto: starts a new contour, except mid-flex where the 7 movetos are control points
+    // appended to the current contour (recorded, not emitted).
+    private void DoMove(float x, float y)
+    {
+        if (_flexing)
+        {
+            _x = x;
+            _y = y;
+            if (_flexCount < _flexPts.Length) _flexPts[_flexCount++] = (x, y);
+            return;
+        }
+        MoveTo(x, y);
+    }
+
+    private void EmitCubicAbs((float X, float Y) c1, (float X, float Y) c2, (float X, float Y) end)
+    {
+        _sink.CubicTo(c1.X, c1.Y, c2.X, c2.Y, end.X, end.Y);
+        _x = end.X;
+        _y = end.Y;
     }
 
     private void EmitCubic(double dx1, double dy1, double dx2, double dy2, double dx3, double dy3)
