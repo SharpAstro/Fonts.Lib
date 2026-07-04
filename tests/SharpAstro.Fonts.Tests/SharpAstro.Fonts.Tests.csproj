@@ -15,19 +15,10 @@
   </ItemGroup>
 
   <!--
-    Mirror the sibling-detection from the lib csproj so tests pick the fork
-    project up when present (and inherit the package otherwise).
+    No direct image-codec reference here: the test suite exercises the color-
+    bitmap path through SharpAstro.Fonts' public API and gets SharpAstro.Png
+    transitively via the project reference below.
   -->
-  <PropertyGroup>
-    <UseLocalStbImage Condition="'$(UseLocalStbImage)' == '' AND Exists('..\..\..\StbImageSharp\src\StbImageSharp\StbImageSharp.csproj')">true</UseLocalStbImage>
-  </PropertyGroup>
-  <ItemGroup Condition="'$(UseLocalStbImage)' == 'true'">
-    <ProjectReference Include="..\..\..\StbImageSharp\src\StbImageSharp\StbImageSharp.csproj" />
-  </ItemGroup>
-  <ItemGroup Condition="'$(UseLocalStbImage)' != 'true'">
-    <PackageReference Include="SharpAstro.StbImage" />
-  </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\..\src\SharpAstro.Fonts\SharpAstro.Fonts.csproj" />
   </ItemGroup>
