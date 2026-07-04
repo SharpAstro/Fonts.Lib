@@ -20,19 +20,20 @@
   </ItemGroup>
 
   <!--
-    PNG decode for CBDT/sbix bitmap glyphs. SharpAstro fork of StbImageSharp,
-    referenced as a sibling project when its working copy exists (fast in-tree
-    iteration on the fork itself) and falling back to the published NuGet
-    otherwise. Override: dotnet build -p:UseLocalStbImage=false.
+    PNG decode for CBDT/sbix bitmap glyphs. Uses the dedicated SharpAstro.Png
+    codec (not the whole stb_image port) — referenced as a sibling project when
+    its working copy exists (fast in-tree iteration on the codec itself) and
+    falling back to the published NuGet otherwise. Both packages live in the
+    StbImageSharp repo. Override: dotnet build -p:UseLocalSharpAstroPng=false.
   -->
   <PropertyGroup>
-    <UseLocalStbImage Condition="'$(UseLocalStbImage)' == '' AND Exists('..\..\..\StbImageSharp\src\StbImageSharp\StbImageSharp.csproj')">true</UseLocalStbImage>
+    <UseLocalSharpAstroPng Condition="'$(UseLocalSharpAstroPng)' == '' AND Exists('..\..\..\StbImageSharp\src\SharpAstro.Png\SharpAstro.Png.csproj')">true</UseLocalSharpAstroPng>
   </PropertyGroup>
-  <ItemGroup Condition="'$(UseLocalStbImage)' == 'true'">
-    <ProjectReference Include="..\..\..\StbImageSharp\src\StbImageSharp\StbImageSharp.csproj" />
+  <ItemGroup Condition="'$(UseLocalSharpAstroPng)' == 'true'">
+    <ProjectReference Include="..\..\..\StbImageSharp\src\SharpAstro.Png\SharpAstro.Png.csproj" />
   </ItemGroup>
-  <ItemGroup Condition="'$(UseLocalStbImage)' != 'true'">
-    <PackageReference Include="SharpAstro.StbImage" />
+  <ItemGroup Condition="'$(UseLocalSharpAstroPng)' != 'true'">
+    <PackageReference Include="SharpAstro.Png" />
   </ItemGroup>
 
   <ItemGroup>
