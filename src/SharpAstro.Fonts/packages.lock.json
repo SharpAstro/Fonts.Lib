@@ -8,14 +8,19 @@
         "resolved": "10.0.9",
         "contentHash": "4Iw41e2h7I4t70SJcX2GCmbyKJIlA273Cfm9RJMM050/3VBejGAG1KcthP5Z2L6SQcbfbf6BhNWO26+ZG+GzMg=="
       },
-      "sharpastro.color.icc": {
-        "type": "Project"
-      },
-      "sharpastro.png": {
-        "type": "Project",
+      "SharpAstro.Png": {
+        "type": "Direct",
+        "requested": "[3.4.*, )",
+        "resolved": "3.4.411",
+        "contentHash": "vBzKFLifBPOH9yc6So1jnLsKQe1fRW2ej9qWsz4QvHGvnYpPESNbQD0HLF19HCthZlUWZEPNCPgLfMXzDVJoxQ==",
         "dependencies": {
-          "SharpAstro.Color.Icc": "[3.2.0, )"
+          "SharpAstro.Color.Icc": "3.4.411"
         }
+      },
+      "SharpAstro.Color.Icc": {
+        "type": "Transitive",
+        "resolved": "3.4.411",
+        "contentHash": "ksNnJ2GlGf5En9dwCEG67MAjPZJb/LNB14FRBq2yzIKO23QEfVOVwmCEAgM3ZYvOwV2NPWJkzlUUJub0imU1uQ=="
       }
     }
   }
