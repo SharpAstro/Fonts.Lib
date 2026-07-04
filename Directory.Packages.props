@@ -15,7 +15,7 @@
     <!-- PNG decode for CBDT/sbix color-bitmap glyphs. The dedicated codec from
          the StbImageSharp repo (PngReader.Decode), not the whole stb_image port;
          floats within the current lockstep 3.3.x family. -->
-    <PackageVersion Include="SharpAstro.Png" Version="3.3.*" />
+    <PackageVersion Include="SharpAstro.Png" Version="3.4.*" />
     <!-- Benchmarks -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.14.0" />
   </ItemGroup>
