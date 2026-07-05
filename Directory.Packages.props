@@ -3,7 +3,7 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <!-- Allow floating versions so SharpAstro.Png auto-picks up new CI
-         publishes from the StbImageSharp repo without manual bumps here. -->
+         publishes from the Codecs repo without manual bumps here. -->
     <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
   </PropertyGroup>
 
@@ -13,7 +13,7 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <!-- PNG decode for CBDT/sbix color-bitmap glyphs. The dedicated codec from
-         the StbImageSharp repo (PngReader.Decode), not the whole stb_image port;
+         the Codecs repo (PngReader.Decode), not the whole stb_image port;
          floats within the current lockstep 3.3.x family. -->
     <PackageVersion Include="SharpAstro.Png" Version="3.4.*" />
     <!-- Benchmarks -->
