@@ -11,16 +11,22 @@
       "SharpAstro.Png": {
         "type": "Direct",
         "requested": "[3.4.*, )",
-        "resolved": "3.4.411",
-        "contentHash": "vBzKFLifBPOH9yc6So1jnLsKQe1fRW2ej9qWsz4QvHGvnYpPESNbQD0HLF19HCthZlUWZEPNCPgLfMXzDVJoxQ==",
+        "resolved": "3.4.471",
+        "contentHash": "Gpde2P5ZCcQiF6cCJVCzNjbO6fx1Q7P950jk4Fwavd1JJm8LXoFgrAAXOt8JbaWRfXVHL/RoJf8XfItcPo88FQ==",
         "dependencies": {
-          "SharpAstro.Color.Icc": "3.4.411"
+          "SharpAstro.Codecs.Abstractions": "3.4.471",
+          "SharpAstro.Color.Icc": "3.4.471"
         }
+      },
+      "SharpAstro.Codecs.Abstractions": {
+        "type": "Transitive",
+        "resolved": "3.4.471",
+        "contentHash": "uryq/i9awMXGQiifkcXucLIEgVw82JLG9zQb0T5147yhhdYjRF4NaxiYt2ID9h6MLnaZnjjihlXu5lskNofEUw=="
       },
       "SharpAstro.Color.Icc": {
         "type": "Transitive",
-        "resolved": "3.4.411",
-        "contentHash": "ksNnJ2GlGf5En9dwCEG67MAjPZJb/LNB14FRBq2yzIKO23QEfVOVwmCEAgM3ZYvOwV2NPWJkzlUUJub0imU1uQ=="
+        "resolved": "3.4.471",
+        "contentHash": "lWlaI2SFDV9Ijad2BayiB/31/n6QM9L64ldJwP9ux7/gYrYNdsnsw8aACEEeGG9PFmNHGnKNyNd8l7Gi/5rfcQ=="
       }
     }
   }
