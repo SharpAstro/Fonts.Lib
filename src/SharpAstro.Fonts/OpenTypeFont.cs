@@ -478,6 +478,22 @@ public sealed class OpenTypeFont
             pixelsPerEm, UnitsPerEm, spread);
 
     /// <summary>
+    /// Rasterize a glyph as a multi-channel signed distance field (MTSDF). Like
+    /// <see cref="RenderSdf"/> the field is computed from the unhinted outline at
+    /// <paramref name="pixelsPerEm"/> with the given <paramref name="spread"/>,
+    /// but corners stay sharp at any scale: RGB carry the per-channel signed
+    /// pseudo-distance and A carries the plain true signed distance (matching the
+    /// single-channel field, so A is a drop-in for <see cref="RenderSdf"/> and
+    /// reserved for outline / glow / weight effects). Returns
+    /// <see cref="MtsdfBitmap.Empty"/> when the outline is empty. TrueType is the
+    /// verified path; CFF is untested (see <see cref="MsdfRasterizer"/>).
+    /// </summary>
+    public MtsdfBitmap RenderMtsdf(uint glyphId, float pixelsPerEm, float spread = 4f)
+        => MsdfRasterizer.RasterizeAuto(
+            sink => DrawGlyph(glyphId, sink),
+            pixelsPerEm, UnitsPerEm, spread);
+
+    /// <summary>
     /// Render a color glyph to an RGBA bitmap. Tries COLR v0/v1 first
     /// (vector + paint tree), then falls back to CBDT (PNG bitmap strikes).
     /// Returns null if this font / glyph has no color data — caller should
