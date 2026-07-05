@@ -13,9 +13,10 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <!-- PNG decode for CBDT/sbix color-bitmap glyphs. The dedicated codec from
-         the Codecs repo (PngReader.Decode), not the whole stb_image port;
-         floats within the current lockstep 3.3.x family. -->
-    <PackageVersion Include="SharpAstro.Png" Version="3.4.*" />
+         the Codecs repo (PngReader.Decode), not the whole SharpAstro.Codecs facade
+         (Fonts needs only PNG, not JPEG/TIFF/EXR/JXL). Floats within the current
+         lockstep 3.5.x family — the Codecs repo publishes all its packages in step. -->
+    <PackageVersion Include="SharpAstro.Png" Version="3.5.*" />
     <!-- Benchmarks -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.14.0" />
   </ItemGroup>
