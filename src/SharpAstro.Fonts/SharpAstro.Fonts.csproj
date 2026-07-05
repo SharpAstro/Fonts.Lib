@@ -24,13 +24,13 @@
     codec (not the whole stb_image port) — referenced as a sibling project when
     its working copy exists (fast in-tree iteration on the codec itself) and
     falling back to the published NuGet otherwise. Both packages live in the
-    StbImageSharp repo. Override: dotnet build -p:UseLocalSharpAstroPng=false.
+    Codecs repo. Override: dotnet build -p:UseLocalSharpAstroPng=false.
   -->
   <PropertyGroup>
-    <UseLocalSharpAstroPng Condition="'$(UseLocalSharpAstroPng)' == '' AND Exists('..\..\..\StbImageSharp\src\SharpAstro.Png\SharpAstro.Png.csproj')">true</UseLocalSharpAstroPng>
+    <UseLocalSharpAstroPng Condition="'$(UseLocalSharpAstroPng)' == '' AND Exists('..\..\..\Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj')">true</UseLocalSharpAstroPng>
   </PropertyGroup>
   <ItemGroup Condition="'$(UseLocalSharpAstroPng)' == 'true'">
-    <ProjectReference Include="..\..\..\StbImageSharp\src\SharpAstro.Png\SharpAstro.Png.csproj" />
+    <ProjectReference Include="..\..\..\Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalSharpAstroPng)' != 'true'">
     <PackageReference Include="SharpAstro.Png" />
