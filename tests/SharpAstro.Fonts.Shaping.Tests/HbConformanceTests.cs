@@ -1,24 +1,22 @@
-using System.Globalization;
-using System.Text;
 using SharpAstro.Fonts.IO;
 
 namespace SharpAstro.Fonts.Shaping.Tests;
 
 /// <summary>
-/// H1 conformance: replay the real-HarfBuzz golden fixtures through the engine and
-/// require an exact match on glyph ids, clusters, and positions. This is the whole
-/// point of the fixture harness — the engine reads the same font tables HarfBuzz
-/// does, so on its supported feature slice (H1: ligatures + kerning) the output must
-/// be identical, not merely close.
+/// Conformance: replay the real-HarfBuzz golden fixtures through the engine and require
+/// an exact match on glyph ids, clusters, and positions. This is the whole point of the
+/// fixture harness — the engine reads the same font tables HarfBuzz does, so on its
+/// supported feature slice the output must be identical, not merely close. H1 proved
+/// ligatures + kerning; H2 adds mark positioning, so the base+combining-mark fixtures
+/// (e.g. <c>q</c>+U+0301) now replay here too.
 ///
-/// <para>Cases needing features H1 hasn't built are skipped by content: any text with
-/// a combining mark needs GPOS mark positioning (H2) and HarfBuzz's normalization
-/// (which the engine deliberately doesn't do), so those can't match yet.</para>
+/// <para>Only RTL cases are held back (the Arabic/bidi shapers land in H4). The fixtures
+/// deliberately avoid base+mark pairs that HarfBuzz would compose to a precomposed glyph
+/// — the engine does no normalization, so those can't match (see <see cref="HbFixtures"/>
+/// remarks).</para>
 /// </summary>
 public class HbConformanceTests
 {
-    private static readonly string FixtureDir = Path.Combine(AppContext.BaseDirectory, "Fixtures");
-
     private static readonly Dictionary<string, ShapingFont> FontCache = new(StringComparer.Ordinal);
 
     private static ShapingFont GetFont(string file)
@@ -31,20 +29,16 @@ public class HbConformanceTests
         return f;
     }
 
-    /// <summary>H1 supports ligatures + kerning only; a combining mark in the text needs H2 + normalization.</summary>
-    private static bool IsH1Supported(HbCase c)
-    {
-        if (c.Rtl) return false; // RTL shapers land in H4
-        foreach (var rune in c.Text.EnumerateRunes())
-            if (Rune.GetUnicodeCategory(rune) == UnicodeCategory.NonSpacingMark) return false;
-        return true;
-    }
+    private static readonly string FixtureDir = Path.Combine(AppContext.BaseDirectory, "Fixtures");
 
-    public static IEnumerable<object[]> H1Cases()
-        => HbFixtures.LoadAll().Where(IsH1Supported).Select(c => new object[] { c });
+    /// <summary>LTR cases are the engine's supported slice; RTL shapers arrive in H4.</summary>
+    private static bool IsSupported(HbCase c) => !c.Rtl;
+
+    public static IEnumerable<object[]> SupportedCases()
+        => HbFixtures.LoadAll().Where(IsSupported).Select(c => new object[] { c });
 
     [Theory]
-    [MemberData(nameof(H1Cases))]
+    [MemberData(nameof(SupportedCases))]
     public void Engine_Matches_HarfBuzz(HbCase c)
     {
         var font = GetFont(c.Font);
@@ -80,9 +74,17 @@ public class HbConformanceTests
     }
 
     [Fact]
-    public void H1Cases_AreActuallyExercised()
+    public void SupportedCases_ExerciseLigaturesKerningAndMarks()
     {
-        // Guard against the filter silently excluding everything (e.g. fixtures not copied).
-        H1Cases().Count().ShouldBeGreaterThan(4, "expected several ligature/kerning cases to replay");
+        // Guard against the filter silently excluding everything (e.g. fixtures not copied)
+        // and against the mark fixtures being dropped in a regeneration.
+        var cases = SupportedCases().Select(o => (HbCase)o[0]).ToList();
+        cases.Count.ShouldBeGreaterThan(4, "expected several ligature/kerning cases to replay");
+
+        // A base+mark case must be present and must actually carry a nonzero mark offset,
+        // or "mark positioning works" isn't being tested.
+        var markCases = cases.Where(c => c.Glyphs.Count >= 2
+            && c.Glyphs.Skip(1).Any(g => g.XOffset != 0 || g.YOffset != 0)).ToList();
+        markCases.Count.ShouldBeGreaterThan(0, "expected base+mark fixtures with real GPOS offsets");
     }
 }

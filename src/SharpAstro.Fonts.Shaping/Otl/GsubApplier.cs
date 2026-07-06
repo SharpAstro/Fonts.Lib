@@ -3,11 +3,12 @@ using SharpAstro.Fonts.IO;
 namespace SharpAstro.Fonts.Shaping.Otl;
 
 /// <summary>
-/// GSUB substitution appliers implemented for H1: type 1 (single) and type 4
-/// (ligature). Each tries to apply one subtable at buffer position <c>i</c>; on
-/// success it mutates the buffer and advances <c>i</c> past the output, returning
-/// true. Types 2/3 (multiple/alternate) and 5/6/8 (contextual/reverse) arrive in
-/// later stages and currently no-op.
+/// GSUB substitution appliers. H1 built type 1 (single) and type 4 (ligature); H2 adds
+/// type 2 (multiple) and type 3 (alternate). Each tries to apply one subtable at buffer
+/// position <c>i</c>; on success it mutates the buffer and advances <c>i</c> past the
+/// output, returning true. Substituted glyphs re-derive their GDEF class from the font so
+/// downstream mark processing sees the right classes (e.g. a <c>ccmp</c> that maps a
+/// codepoint to a mark glyph). Contextual/reverse (types 5/6/8) arrive in later stages.
 ///
 /// <para>Spec: https://learn.microsoft.com/typography/opentype/spec/gsub</para>
 /// </summary>
@@ -17,16 +18,22 @@ internal static class GsubApplier
     // the cap bounds the stack buffer for matched component indices).
     private const int MaxComponents = 16;
 
+    // Multiple-substitution sequences longer than this are skipped (real decompositions
+    // are 2–4 glyphs; the cap bounds the stack buffers for the output glyphs/classes).
+    private const int MaxSequence = 32;
+
     public static bool Apply(Lookup lookup, ReadOnlySpan<byte> subtable,
         ShapingFont font, ShapeBuffer buffer, ref int i)
         => lookup.Type switch
         {
-            1 => ApplySingle(subtable, buffer, ref i),
+            1 => ApplySingle(subtable, font, buffer, ref i),
+            2 => ApplyMultiple(subtable, font, buffer, ref i),
+            3 => ApplyAlternate(subtable, font, buffer, ref i),
             4 => ApplyLigature(lookup, subtable, font, buffer, ref i),
-            _ => false, // 2/3/5/6/8 — later stages
+            _ => false, // 5/6/8 — later stages
         };
 
-    private static bool ApplySingle(ReadOnlySpan<byte> subtable, ShapeBuffer buffer, ref int i)
+    private static bool ApplySingle(ReadOnlySpan<byte> subtable, ShapingFont font, ShapeBuffer buffer, ref int i)
     {
         if (subtable.Length < 6) return false;
         var r = new BigEndianReader(subtable);
@@ -41,7 +48,8 @@ internal static class GsubApplier
         if (format == 1)
         {
             var delta = r.ReadInt16();
-            buffer.Substitute(i, (uint)((gid + delta) & 0xFFFF), GlyphClass.Base);
+            var newGid = (uint)((gid + delta) & 0xFFFF);
+            buffer.Substitute(i, newGid, font.Gdef.GetGlyphClass(newGid));
             i++;
             return true;
         }
@@ -53,12 +61,90 @@ internal static class GsubApplier
             // substituteGlyphIDs[] follows glyphCount; each is a uint16.
             r.Skip(covIdx * 2);
             if (r.Remaining < 2) return false;
-            buffer.Substitute(i, r.ReadUInt16(), GlyphClass.Base);
+            var newGid = r.ReadUInt16();
+            buffer.Substitute(i, newGid, font.Gdef.GetGlyphClass(newGid));
             i++;
             return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Type 2 — one glyph expands to a sequence (e.g. a <c>ccmp</c> decomposition). The
+    /// output glyphs share the input's cluster; <c>i</c> advances past them all. A
+    /// zero-length sequence deletes the glyph (<c>i</c> stays, now pointing at the glyph
+    /// that shifted into place — HarfBuzz's behavior).
+    /// </summary>
+    private static bool ApplyMultiple(ReadOnlySpan<byte> subtable, ShapingFont font, ShapeBuffer buffer, ref int i)
+    {
+        if (subtable.Length < 6) return false;
+        var r = new BigEndianReader(subtable);
+        var format = r.ReadUInt16();
+        if (format != 1) return false;
+        var coverageOffset = r.ReadUInt16();
+        var sequenceCount = r.ReadUInt16();
+
+        var cov = Coverage.Parse(subtable, coverageOffset);
+        var covIdx = cov.GetCoverageIndex(buffer.GlyphsMutable[i]);
+        if (covIdx < 0 || covIdx >= sequenceCount) return false;
+
+        var seqOffsetPos = 6 + covIdx * 2;
+        if (seqOffsetPos + 2 > subtable.Length) return false;
+        var seqOffset = ReadU16(subtable, seqOffsetPos);
+        if (seqOffset == 0 || seqOffset + 2 > subtable.Length) return false;
+
+        var seq = subtable[seqOffset..];
+        var glyphCount = ReadU16(seq, 0);
+        if (glyphCount > MaxSequence) return false;
+        if (2 + glyphCount * 2 > seq.Length) return false;
+
+        Span<uint> outGlyphs = stackalloc uint[glyphCount];
+        Span<byte> outClasses = stackalloc byte[glyphCount];
+        for (var g = 0; g < glyphCount; g++)
+        {
+            var gid = ReadU16(seq, 2 + g * 2);
+            outGlyphs[g] = gid;
+            outClasses[g] = (byte)font.Gdef.GetGlyphClass(gid);
+        }
+
+        buffer.ReplaceWithSequence(i, outGlyphs, outClasses);
+        i += glyphCount; // deletion (glyphCount 0) leaves i on the shifted-in glyph
+        return true;
+    }
+
+    /// <summary>
+    /// Type 3 — replace a glyph with one of its alternates. Our feature model is on/off
+    /// (no per-feature alternate-selection value — that's <c>aalt</c>/<c>ss01</c>+/<c>cv01</c>+,
+    /// features outside the default plan), so we take the first alternate, which is what
+    /// HarfBuzz picks for a feature enabled with value 1.
+    /// </summary>
+    private static bool ApplyAlternate(ReadOnlySpan<byte> subtable, ShapingFont font, ShapeBuffer buffer, ref int i)
+    {
+        if (subtable.Length < 6) return false;
+        var r = new BigEndianReader(subtable);
+        var format = r.ReadUInt16();
+        if (format != 1) return false;
+        var coverageOffset = r.ReadUInt16();
+        var alternateSetCount = r.ReadUInt16();
+
+        var cov = Coverage.Parse(subtable, coverageOffset);
+        var covIdx = cov.GetCoverageIndex(buffer.GlyphsMutable[i]);
+        if (covIdx < 0 || covIdx >= alternateSetCount) return false;
+
+        var setOffsetPos = 6 + covIdx * 2;
+        if (setOffsetPos + 2 > subtable.Length) return false;
+        var setOffset = ReadU16(subtable, setOffsetPos);
+        if (setOffset == 0 || setOffset + 2 > subtable.Length) return false;
+
+        var set = subtable[setOffset..];
+        var glyphCount = ReadU16(set, 0);
+        if (glyphCount == 0 || 2 + 2 > set.Length) return false;
+
+        var newGid = ReadU16(set, 2); // alternates[0]
+        buffer.Substitute(i, newGid, font.Gdef.GetGlyphClass(newGid));
+        i++;
+        return true;
     }
 
     private static bool ApplyLigature(Lookup lookup, ReadOnlySpan<byte> subtable,

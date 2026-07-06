@@ -42,6 +42,11 @@ internal sealed class GdefTable
     /// non-null GdefTable for fonts without GDEF (common in PDF subset fonts).</summary>
     public static readonly GdefTable Empty = new(ClassDef.Empty, ClassDef.Empty, []);
 
+    /// <summary>Whether the font carries a GlyphClassDef. When false, the shaper synthesizes
+    /// mark/base classes from Unicode general category (HarfBuzz's fallback for fonts without
+    /// GDEF glyph classes — common in subset/PDF fonts).</summary>
+    public bool HasGlyphClasses => !ReferenceEquals(_glyphClasses, ClassDef.Empty);
+
     public GlyphClass GetGlyphClass(uint glyphId)
     {
         var cls = _glyphClasses.GetClass(glyphId);

@@ -39,6 +39,10 @@ public sealed class ShapeBuffer
     private int[] _advDeltas = new int[64];
     private int[] _xOffsets = new int[64];
     private int[] _yOffsets = new int[64];
+    // Relative buffer offset to a glyph's mark-attachment parent (0 = not attached).
+    // Set by GPOS mark positioning, then consumed (zeroed) by the positioning-finish
+    // propagation pass — HarfBuzz's attach_chain, same delta model.
+    private int[] _attachChain = new int[64];
     private int _length;
 
     /// <summary>Number of glyphs currently in the buffer.</summary>
@@ -71,6 +75,7 @@ public sealed class ShapeBuffer
     internal Span<int> AdvDeltasMutable => _advDeltas.AsSpan(0, _length);
     internal Span<int> XOffsetsMutable => _xOffsets.AsSpan(0, _length);
     internal Span<int> YOffsetsMutable => _yOffsets.AsSpan(0, _length);
+    internal Span<int> AttachChainMutable => _attachChain.AsSpan(0, _length);
 
     /// <summary>Reset to an empty buffer (keeps capacity). Direction is preserved.</summary>
     public void Clear() => _length = 0;
@@ -95,6 +100,7 @@ public sealed class ShapeBuffer
             _advDeltas[_length] = 0;
             _xOffsets[_length] = 0;
             _yOffsets[_length] = 0;
+            _attachChain[_length] = 0;
             _length++;
             cluster += rune.Utf16SequenceLength;
         }
@@ -113,6 +119,79 @@ public sealed class ShapeBuffer
         _advDeltas[index] += xAdvance;
         _xOffsets[index] += xOffset;
         _yOffsets[index] += yOffset;
+    }
+
+    /// <summary>
+    /// Record a GPOS mark attachment (types 4/5/6): the mark at <paramref name="markIndex"/>
+    /// is anchored to the glyph at <paramref name="parentIndex"/> with the raw
+    /// (base-anchor − mark-anchor) placement. Offsets are <em>set</em> (not accumulated),
+    /// mirroring HarfBuzz's <c>mark_array.apply</c> which overwrites the mark's position.
+    /// The final on-line offset is computed later by <see cref="Shaper"/>'s propagation
+    /// pass, which folds in the parent's offset and the advances between them.
+    /// </summary>
+    internal void AttachMark(int markIndex, int parentIndex, int xOffset, int yOffset)
+    {
+        _xOffsets[markIndex] = xOffset;
+        _yOffsets[markIndex] = yOffset;
+        _attachChain[markIndex] = parentIndex - markIndex;
+    }
+
+    /// <summary>Set the GDEF glyph class at <paramref name="index"/> (used when a substitution
+    /// changes what a slot holds — the new glyph's class is re-derived from GDEF).</summary>
+    internal void SetClass(int index, GlyphClass glyphClass) => _classes[index] = (byte)glyphClass;
+
+    /// <summary>
+    /// Replace the single glyph at <paramref name="index"/> with the <paramref name="glyphs"/>
+    /// sequence (GSUB type 2, multiple substitution). All output slots inherit the replaced
+    /// glyph's cluster and feature mask; positions reset to zero and classes are taken from
+    /// <paramref name="classes"/> (GDEF-derived by the caller). An empty sequence deletes the
+    /// slot (some fonts spell "remove this glyph" as a zero-length MultipleSubst).
+    /// </summary>
+    internal void ReplaceWithSequence(int index, ReadOnlySpan<uint> glyphs, ReadOnlySpan<byte> classes)
+    {
+        var n = glyphs.Length;
+        var cluster = _clusters[index];
+        var mask = _masks[index];
+        var delta = n - 1;
+
+        if (delta > 0)
+        {
+            EnsureCapacity(_length + delta);
+            // Shift the tail right (from the end, so we don't clobber unread slots).
+            for (var k = _length - 1; k > index; k--) CopySlot(k, k + delta);
+        }
+        else if (delta < 0) // n == 0 → delete: pull the tail left over the slot.
+        {
+            for (var k = index + 1; k < _length; k++) CopySlot(k, k - 1);
+        }
+
+        for (var t = 0; t < n; t++)
+        {
+            var at = index + t;
+            _glyphs[at] = glyphs[t];
+            _clusters[at] = cluster;
+            _masks[at] = mask;
+            _classes[at] = classes[t];
+            _advDeltas[at] = 0;
+            _xOffsets[at] = 0;
+            _yOffsets[at] = 0;
+            _attachChain[at] = 0;
+        }
+        _length += delta;
+    }
+
+    /// <summary>Swap two slots and all their parallel data (canonical mark reordering).</summary>
+    internal void SwapSlots(int a, int b)
+    {
+        if (a == b) return;
+        (_glyphs[a], _glyphs[b]) = (_glyphs[b], _glyphs[a]);
+        (_clusters[a], _clusters[b]) = (_clusters[b], _clusters[a]);
+        (_masks[a], _masks[b]) = (_masks[b], _masks[a]);
+        (_classes[a], _classes[b]) = (_classes[b], _classes[a]);
+        (_advDeltas[a], _advDeltas[b]) = (_advDeltas[b], _advDeltas[a]);
+        (_xOffsets[a], _xOffsets[b]) = (_xOffsets[b], _xOffsets[a]);
+        (_yOffsets[a], _yOffsets[b]) = (_yOffsets[b], _yOffsets[a]);
+        (_attachChain[a], _attachChain[b]) = (_attachChain[b], _attachChain[a]);
     }
 
     /// <summary>
@@ -164,6 +243,7 @@ public sealed class ShapeBuffer
         _advDeltas[to] = _advDeltas[from];
         _xOffsets[to] = _xOffsets[from];
         _yOffsets[to] = _yOffsets[from];
+        _attachChain[to] = _attachChain[from];
     }
 
     /// <summary>Reverse the run in place (logical → visual order for RTL). All parallel arrays reverse together.</summary>
@@ -176,6 +256,7 @@ public sealed class ShapeBuffer
         Array.Reverse(_advDeltas, 0, _length);
         Array.Reverse(_xOffsets, 0, _length);
         Array.Reverse(_yOffsets, 0, _length);
+        Array.Reverse(_attachChain, 0, _length);
     }
 
     private void EnsureCapacity(int needed)
@@ -189,5 +270,6 @@ public sealed class ShapeBuffer
         Array.Resize(ref _advDeltas, newSize);
         Array.Resize(ref _xOffsets, newSize);
         Array.Resize(ref _yOffsets, newSize);
+        Array.Resize(ref _attachChain, newSize);
     }
 }
