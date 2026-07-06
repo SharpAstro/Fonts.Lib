@@ -7,11 +7,10 @@ namespace SharpAstro.Fonts.Shaping;
 /// The shaping entry point: maps a <see cref="ShapeBuffer"/>'s codepoints to glyphs
 /// and runs the font's GSUB/GPOS lookups per the resolved <see cref="ShapePlan"/>.
 ///
-/// <para><b>H0 status:</b> the full pipeline runs — cmap mapping, GDEF glyph
-/// classing, RTL reversal, plan resolution, and the lookup walk with lookupFlag
-/// skipping — but no lookup <em>types</em> are implemented yet, so every subtable
-/// application is a no-op and output equals per-codepoint cmap mapping with zero
-/// position deltas. H1 fills in GSUB 1/4 + GPOS 1/2 (ligatures + kerning).</para>
+/// <para><b>H1 status:</b> GSUB type 1 (single) + 4 (ligature) and GPOS type 1
+/// (single) + 2 (pair) are applied — real ligatures and kerning. Alternates
+/// (GSUB 2/3), marks (GPOS 4/5/6), cursive (GPOS 3), and contextual/reverse
+/// (GSUB/GPOS 5/6/7/8) still no-op until later stages.</para>
 /// </summary>
 public static class Shaper
 {
@@ -30,14 +29,17 @@ public static class Shaper
 
         MapToGlyphs(font, buffer);
 
-        if (buffer.Direction == ShapeDirection.RightToLeft)
-            buffer.Reverse();
-
+        // Lookups run in LOGICAL order (spec); the buffer is reversed to visual order
+        // only after positioning, so GSUB sequence matching and GPOS pairs see glyphs
+        // in reading order regardless of direction.
         var plan = font.GetPlan(script, buffer.Direction);
         if (font.Gsub is not null)
             ApplyLookups(font.Gsub, plan.SubstitutionLookups, font, buffer, isSubstitution: true);
         if (font.Gpos is not null)
             ApplyLookups(font.Gpos, plan.PositioningLookups, font, buffer, isSubstitution: false);
+
+        if (buffer.Direction == ShapeDirection.RightToLeft)
+            buffer.Reverse();
     }
 
     /// <summary>Codepoints → glyph ids via cmap, and GDEF glyph classes for lookupFlag skipping.</summary>
@@ -98,19 +100,13 @@ public static class Shaper
 
     /// <summary>
     /// Dispatch one subtable at buffer position <paramref name="i"/>. Returns true when
-    /// it applied (having advanced <paramref name="i"/> past the applied output).
-    /// H0: no lookup types implemented — always false. H1+: GSUB 1 (single),
-    /// 4 (ligature); GPOS 1 (single), 2 (pair); then marks, contextual, cursive.
+    /// it applied (having advanced <paramref name="i"/> past the applied output); false
+    /// leaves <paramref name="i"/> unchanged for the caller to step. H1: GSUB 1/4 and
+    /// GPOS 1/2; other types no-op in their appliers until later stages.
     /// </summary>
     private static bool TryApplySubtable(Lookup lookup, ReadOnlyMemory<byte> subtable,
         ShapingFont font, ShapeBuffer buffer, ref int i, bool isSubstitution)
-    {
-        _ = lookup;
-        _ = subtable;
-        _ = font;
-        _ = buffer;
-        _ = i;
-        _ = isSubstitution;
-        return false;
-    }
+        => isSubstitution
+            ? GsubApplier.Apply(lookup, subtable.Span, font, buffer, ref i)
+            : GposApplier.Apply(lookup, subtable.Span, font, buffer, ref i);
 }

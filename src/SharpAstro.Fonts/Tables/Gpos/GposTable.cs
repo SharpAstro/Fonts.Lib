@@ -5,9 +5,12 @@ namespace SharpAstro.Fonts.Tables.Gpos;
 /// <summary>
 /// OpenType GPOS table — General Positioning. This implementation parses only
 /// LookupType 2 (PairAdjustment), which is the GPOS equivalent of the legacy
-/// 'kern' table. ScriptList and FeatureList are intentionally not parsed; we
-/// scan all type-2 lookups unconditionally, matching the behaviour of most
-/// simple renderers.
+/// 'kern' table — including type-2 subtables wrapped in a LookupType 9
+/// (Extension) lookup, which some fonts use for all their kerning. ScriptList
+/// and FeatureList are intentionally not parsed; we scan all such lookups
+/// unconditionally, matching the behaviour of most simple renderers. (The full
+/// GSUB/GPOS shaping engine lives in the SharpAstro.Fonts.Shaping satellite;
+/// this slice stays a minimal kern lookup for GetKerning / advance shaping.)
 ///
 /// <para>Spec: https://learn.microsoft.com/en-us/typography/opentype/spec/gpos</para>
 /// </summary>
@@ -368,8 +371,12 @@ internal sealed class GposTable
             var lookupFlag    = lr.ReadUInt16();
             var subTableCount = lr.ReadUInt16();
 
-            // Only PairAdjustment (type 2).
-            if (lookupType != 2)
+            // PairAdjustment (type 2), directly or wrapped in an Extension lookup (type 9).
+            // Some fonts (e.g. those built by certain toolchains) put all their kerning behind
+            // Extension lookups; without unwrapping them, GetKerning would silently return 0 for
+            // such fonts. GPOS scanning here is unconditional over type-2 lookups (ScriptList/
+            // FeatureList unparsed) — matching the rest of this simple slice.
+            if (lookupType != 2 && lookupType != 9)
                 continue;
 
             var subOffsets = new ushort[subTableCount];
@@ -381,7 +388,24 @@ internal sealed class GposTable
                 var subBase = lookupBase + subOffsets[s];
                 if (subBase >= data.Length) continue;
 
-                ParsePairAdjustmentSubtable(data, subBase, format1List, format2List);
+                if (lookupType == 9)
+                {
+                    // ExtensionPos format 1: uint16 format, uint16 extensionLookupType,
+                    // uint32 extensionOffset (relative to the ExtensionPos subtable start).
+                    if (subBase + 8 > data.Length) continue;
+                    var er = new BigEndianReader(data[subBase..]);
+                    var extFormat = er.ReadUInt16();
+                    var extType = er.ReadUInt16();
+                    var extOffset = (int)er.ReadUInt32();
+                    if (extFormat != 1 || extType != 2) continue; // only unwrap PairAdjustment
+                    var wrappedBase = subBase + extOffset;
+                    if (wrappedBase <= subBase || wrappedBase >= data.Length) continue;
+                    ParsePairAdjustmentSubtable(data, wrappedBase, format1List, format2List);
+                }
+                else
+                {
+                    ParsePairAdjustmentSubtable(data, subBase, format1List, format2List);
+                }
             }
         }
 

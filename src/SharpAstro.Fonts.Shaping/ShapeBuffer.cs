@@ -1,4 +1,5 @@
 using System.Text;
+using SharpAstro.Fonts.Shaping.Otl;
 
 namespace SharpAstro.Fonts.Shaping;
 
@@ -97,6 +98,72 @@ public sealed class ShapeBuffer
             _length++;
             cluster += rune.Utf16SequenceLength;
         }
+    }
+
+    /// <summary>Replace the glyph id at <paramref name="index"/> in place (GSUB single substitution).</summary>
+    internal void Substitute(int index, uint glyphId, GlyphClass glyphClass)
+    {
+        _glyphs[index] = glyphId;
+        _classes[index] = (byte)glyphClass;
+    }
+
+    /// <summary>Add positioning deltas (font units) to the glyph at <paramref name="index"/> (GPOS).</summary>
+    internal void AddPosition(int index, int xAdvance, int xOffset, int yOffset)
+    {
+        _advDeltas[index] += xAdvance;
+        _xOffsets[index] += xOffset;
+        _yOffsets[index] += yOffset;
+    }
+
+    /// <summary>
+    /// Form a ligature (GSUB type 4). <paramref name="componentIndices"/> are the ascending
+    /// buffer positions of the matched components (found skip-aware, so possibly
+    /// non-contiguous); <paramref name="componentIndices"/>[0] receives the ligature glyph and
+    /// the remaining component slots are removed. Glyphs <em>between</em> components that were
+    /// skipped (marks) are preserved, shifting left to close the gaps. Clusters across the whole
+    /// span [first..last] merge to their minimum — the HarfBuzz cluster-level-0 rule A4's caret
+    /// mapping expects.
+    /// </summary>
+    internal void Ligate(ReadOnlySpan<int> componentIndices, uint ligatureGlyph)
+    {
+        var first = componentIndices[0];
+        var last = componentIndices[^1];
+
+        // Merge clusters to the minimum over the whole covered span (components + intervening marks).
+        var minCluster = _clusters[first];
+        for (var k = first + 1; k <= last; k++)
+            if (_clusters[k] < minCluster) minCluster = _clusters[k];
+
+        _glyphs[first] = ligatureGlyph;
+        _classes[first] = (byte)GlyphClass.Ligature;
+        for (var k = first; k <= last; k++) _clusters[k] = minCluster;
+
+        // Compact out the non-first component slots, keeping everything else (marks).
+        // componentIndices is ascending; walk source positions, dropping components 1..n-1.
+        var write = first + 1;
+        var ci = 1; // next component to drop
+        for (var read = first + 1; read < _length; read++)
+        {
+            if (ci < componentIndices.Length && read == componentIndices[ci])
+            {
+                ci++; // drop this component slot
+                continue;
+            }
+            if (write != read) CopySlot(read, write);
+            write++;
+        }
+        _length = write;
+    }
+
+    private void CopySlot(int from, int to)
+    {
+        _glyphs[to] = _glyphs[from];
+        _clusters[to] = _clusters[from];
+        _masks[to] = _masks[from];
+        _classes[to] = _classes[from];
+        _advDeltas[to] = _advDeltas[from];
+        _xOffsets[to] = _xOffsets[from];
+        _yOffsets[to] = _yOffsets[from];
     }
 
     /// <summary>Reverse the run in place (logical → visual order for RTL). All parallel arrays reverse together.</summary>
