@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>SharpAstro.Fonts.Shaping</RootNamespace>
+    <AssemblyName>SharpAstro.Fonts.Shaping</AssemblyName>
+    <PackageId>SharpAstro.Fonts.Shaping</PackageId>
+    <Description>Pure-managed OpenType text-shaping engine (GSUB/GPOS/GDEF) over SharpAstro.Fonts. AOT-compatible, no native dependencies. Staged scope: OT-layout core, ligatures/kerning/marks, Arabic joining; Indic/USE out of scope.</Description>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <VersionPrefix>1.5.0</VersionPrefix>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/SharpAstro/Fonts.Lib.git</RepositoryUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpAstro.Fonts.Shaping.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpAstro.Fonts\SharpAstro.Fonts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>

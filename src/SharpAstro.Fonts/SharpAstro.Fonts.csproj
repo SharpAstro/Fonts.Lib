@@ -17,6 +17,11 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="SharpAstro.Fonts.Tests" />
+    <!-- First-party shaping satellite (same repo, lockstep versions): parses
+         GSUB/GDEF via TryGetTable and reuses the internal BigEndianReader/Tags
+         plumbing rather than forcing that IO layer into the public API. -->
+    <InternalsVisibleTo Include="SharpAstro.Fonts.Shaping" />
+    <InternalsVisibleTo Include="SharpAstro.Fonts.Shaping.Tests" />
   </ItemGroup>
 
   <!--

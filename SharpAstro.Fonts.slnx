@@ -1,11 +1,16 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/SharpAstro.Fonts/SharpAstro.Fonts.csproj" />
+    <Project Path="src/SharpAstro.Fonts.Shaping/SharpAstro.Fonts.Shaping.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SharpAstro.Fonts.Tests/SharpAstro.Fonts.Tests.csproj" />
+    <Project Path="tests/SharpAstro.Fonts.Shaping.Tests/SharpAstro.Fonts.Shaping.Tests.csproj" />
   </Folder>
   <Folder Name="/benchmarks/">
     <Project Path="benchmarks/SharpAstro.Fonts.Benchmarks/SharpAstro.Fonts.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/HbFixtureGen/HbFixtureGen.csproj" />
   </Folder>
 </Solution>

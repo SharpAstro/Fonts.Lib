@@ -19,6 +19,11 @@
     <PackageVersion Include="SharpAstro.Png" Version="3.5.*" />
     <!-- Benchmarks -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.14.0" />
+    <!-- tools/HbFixtureGen ONLY (dev-only golden-fixture generator, never shipped):
+         real HarfBuzz via the SkiaSharp-family binding. The shipping engine
+         (SharpAstro.Fonts.Shaping) is pure managed and must not reference these. -->
+    <PackageVersion Include="HarfBuzzSharp" Version="8.*" />
+    <PackageVersion Include="HarfBuzzSharp.NativeAssets.Linux" Version="8.*" />
   </ItemGroup>
 
 </Project>
