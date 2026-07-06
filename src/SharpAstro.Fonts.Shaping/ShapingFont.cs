@@ -67,9 +67,10 @@ public sealed class ShapingFont
         return new ShapingFont(font, gsub, gpos, gdef);
     }
 
-    /// <summary>Resolved lookup plan for (<paramref name="script"/>, <paramref name="direction"/>), cached.</summary>
+    /// <summary>Resolved lookup plan for (<paramref name="script"/>, <paramref name="direction"/>),
+    /// cached. The feature set comes from the shaper <see cref="Shaper.SelectShaper"/> picks for
+    /// the script, so the plan always matches the shaper that will run it.</summary>
     public ShapePlan GetPlan(Tag script, ShapeDirection direction)
         => _plans.GetOrAdd((script, direction),
-            static (key, self) => ShapePlan.Build(self.Gsub, self.Gpos, key.Script, key.Direction),
-            this);
+            key => ShapePlan.Build(Gsub, Gpos, key.Script, key.Direction, Shaper.SelectShaper(key.Script)));
 }

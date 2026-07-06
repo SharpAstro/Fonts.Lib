@@ -13,3 +13,9 @@
 {"font":"DejaVuSans.ttf","text":"f\u0301","script":"latn","dir":"ltr","glyphs":[[73,0,721,0,0,0],[5923,0,0,0,271,373]]}
 {"font":"DejaVuSans.ttf","text":"f\u0300","script":"latn","dir":"ltr","glyphs":[[73,0,721,0,0,0],[5925,0,0,0,271,373]]}
 {"font":"DejaVuSans.ttf","text":"f\u0302","script":"latn","dir":"ltr","glyphs":[[73,0,721,0,0,0],[5926,0,0,0,271,373]]}
+{"font":"DejaVuSans.ttf","text":"\u0628\u0628","script":"arab","dir":"rtl","glyphs":[[5258,1,2011,0,0,0],[5259,0,570,0,0,0]]}
+{"font":"DejaVuSans.ttf","text":"\u0628\u0628\u0628","script":"arab","dir":"rtl","glyphs":[[5258,2,2011,0,0,0],[5260,1,618,0,0,0],[5259,0,570,0,0,0]]}
+{"font":"DejaVuSans.ttf","text":"\u0644\u0627","script":"arab","dir":"rtl","glyphs":[[5365,0,1168,0,0,0]]}
+{"font":"DejaVuSans.ttf","text":"\u0633\u0644\u0627\u0645","script":"arab","dir":"rtl","glyphs":[[1390,3,1268,0,0,0],[5366,1,1222,0,0,0],[5293,0,1716,0,0,0]]}
+{"font":"DejaVuSans.ttf","text":"\u05D0\u05D1","script":"hebr","dir":"rtl","glyphs":[[1320,1,1184,0,0,0],[1319,0,1369,0,0,0]]}
+{"font":"DejaVuSans.ttf","text":"\u05E9\u05DC\u05D5\u05DD","script":"hebr","dir":"rtl","glyphs":[[1332,3,1359,0,0,0],[1324,2,558,0,0,0],[1331,1,1164,0,0,0],[1344,0,1451,0,0,0]]}

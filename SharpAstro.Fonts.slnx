@@ -12,5 +12,6 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/HbFixtureGen/HbFixtureGen.csproj" />
+    <Project Path="tools/UcdGen/UcdGen.csproj" />
   </Folder>
 </Solution>

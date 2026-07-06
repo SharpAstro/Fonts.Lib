@@ -8,12 +8,12 @@ namespace SharpAstro.Fonts.Shaping.Tests;
 /// fixture harness — the engine reads the same font tables HarfBuzz does, so on its
 /// supported feature slice the output must be identical, not merely close. H1 proved
 /// ligatures + kerning; H2 adds mark positioning, so the base+combining-mark fixtures
-/// (e.g. <c>q</c>+U+0301) now replay here too.
+/// (e.g. <c>q</c>+U+0301) now replay here too. H4 adds RTL: Arabic joining (positional
+/// forms + the lam-alef ligature) and Hebrew reversal.
 ///
-/// <para>Only RTL cases are held back (the Arabic/bidi shapers land in H4). The fixtures
-/// deliberately avoid base+mark pairs that HarfBuzz would compose to a precomposed glyph
-/// — the engine does no normalization, so those can't match (see <see cref="HbFixtures"/>
-/// remarks).</para>
+/// <para>The fixtures deliberately avoid base+mark pairs that HarfBuzz would compose to a
+/// precomposed glyph — the engine does no normalization, so those can't match (see
+/// <see cref="HbFixtures"/> remarks).</para>
 /// </summary>
 public class HbConformanceTests
 {
@@ -31,8 +31,10 @@ public class HbConformanceTests
 
     private static readonly string FixtureDir = Path.Combine(AppContext.BaseDirectory, "Fixtures");
 
-    /// <summary>LTR cases are the engine's supported slice; RTL shapers arrive in H4.</summary>
-    private static bool IsSupported(HbCase c) => !c.Rtl;
+    /// <summary>Every checked-in fixture is now within the engine's supported slice (LTR
+    /// Latin, Arabic joining, Hebrew RTL). Kept as a seam for fencing off future scripts
+    /// (e.g. Indic) whose fixtures would be added ahead of their shaper.</summary>
+    private static bool IsSupported(HbCase c) { _ = c; return true; }
 
     public static IEnumerable<object[]> SupportedCases()
         => HbFixtures.LoadAll().Where(IsSupported).Select(c => new object[] { c });
