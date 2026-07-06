@@ -1,3 +1,4 @@
+using SharpAstro.Fonts.IO;
 using SharpAstro.Fonts.Shaping.Ucd;
 
 namespace SharpAstro.Fonts.Shaping.Tests;
@@ -56,4 +57,18 @@ public class UcdTableTests
     [InlineData(0x0628u)] // Arabic beh — no mirror
     public void Mirror_LeavesUnmirroredUnchanged(uint codepoint)
         => BidiMirroring.Get(codepoint).ShouldBe(codepoint);
+
+    // Script.Get dispatches through the generated page index (cp>>8) into the range table. Cover
+    // several scripts, a page boundary (U+02FF Latin | U+0300 Inherited), and a codepoint whose
+    // page is beyond the table — all resolving as the pre-paged binary search did.
+    [Theory]
+    [InlineData(0x0041u, "latn")]  // 'A'
+    [InlineData(0x0391u, "grek")]  // Greek capital alpha
+    [InlineData(0x05D0u, "hebr")]  // Hebrew alef
+    [InlineData(0x0628u, "arab")]  // Arabic beh
+    [InlineData(0x4E00u, "hani")]  // CJK unified ideograph
+    [InlineData(0x0300u, "zinh")]  // combining grave — Inherited, and the page after U+02FF
+    [InlineData(0xF0000u, "zyyy")] // plane-15 unassigned — page beyond the table ⇒ Common
+    public void Script_Get(uint codepoint, string expectedTag)
+        => Script.Get(codepoint).ShouldBe(new Tag(expectedTag));
 }

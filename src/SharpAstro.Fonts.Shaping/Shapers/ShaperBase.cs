@@ -41,8 +41,13 @@ internal abstract class ShaperBase
         // Canonical mark ordering + grapheme-cluster merging run on codepoints, before cmap.
         // Reordering is the only "normalization" the engine does; merging gives each combining
         // mark its base's cluster (HarfBuzz cluster level 0 — the model DIR.Lib's caret assumes).
-        CanonicalReorderMarks(buffer);
-        MergeGraphemeClusters(buffer);
+        // Both are no-ops below U+0300 (no combining marks exist there), so a run that never leaves
+        // Basic Latin..Latin Extended-B skips them entirely — the common UI-text case.
+        if (buffer.MaxCodepoint >= 0x300)
+        {
+            CanonicalReorderMarks(buffer);
+            MergeGraphemeClusters(buffer);
+        }
 
         // Per-glyph feature masks (Arabic joining) are computed on codepoints, before mapping.
         AssignMasks(font, buffer, plan);
@@ -51,10 +56,8 @@ internal abstract class ShaperBase
 
         // Lookups run in LOGICAL order (spec); the buffer is reversed to visual order only after
         // positioning, so GSUB matching, GPOS pairs, and mark attachment see reading order.
-        if (font.Gsub is not null)
-            new LookupRunner(font, font.Gsub, isSubstitution: true).Run(plan.SubstitutionLookups, buffer);
-        if (font.Gpos is not null)
-            new LookupRunner(font, font.Gpos, isSubstitution: false).Run(plan.PositioningLookups, buffer);
+        font.GsubRunner?.Run(plan.SubstitutionLookups, buffer);
+        font.GposRunner?.Run(plan.PositioningLookups, buffer);
 
         // Turn mark attachments into on-line offsets and zero mark advances (still logical order).
         GposApplier.Finish(font, buffer);

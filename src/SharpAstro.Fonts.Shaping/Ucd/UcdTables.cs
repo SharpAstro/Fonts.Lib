@@ -82,4 +82,32 @@ internal static class UcdTables
         }
         return notFound;
     }
+
+    /// <summary>
+    /// Look up <paramref name="codepoint"/> in a wide range table via a page index — the
+    /// pre-generated two-stage-trie technique. <paramref name="pageIndex"/> maps each 256-codepoint
+    /// page (<c>cp &gt;&gt; 8</c>) to the index of the first range that reaches into it (u16, little-
+    /// endian), so only the handful of ranges overlapping that page are scanned rather than binary-
+    /// searching the whole table. Returns <paramref name="notFound"/> for a gap between ranges or a
+    /// codepoint whose page is beyond the table.
+    /// </summary>
+    internal static uint RangeU32Paged(ReadOnlySpan<byte> ranges, ReadOnlySpan<byte> pageIndex,
+        uint codepoint, uint notFound)
+    {
+        var page = codepoint >> 8;
+        if (page >= (uint)(pageIndex.Length >> 1)) return notFound;
+        var pi = (int)(page << 1);
+        var i = pageIndex[pi] | (pageIndex[pi + 1] << 8);
+        var count = ranges.Length / WideRangeEntrySize;
+        while (i < count)
+        {
+            var offset = i * WideRangeEntrySize;
+            var start = ReadU24(ranges, offset);
+            if (start > codepoint) break;                       // fell into a gap before the next range
+            if (codepoint <= ReadU24(ranges, offset + 3))       // within [start, end]
+                return ReadU32(ranges, offset + 6);
+            i++;
+        }
+        return notFound;
+    }
 }

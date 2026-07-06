@@ -22,6 +22,11 @@ public sealed class ShapingFont
     internal LayoutTable? Gpos { get; }
     internal GdefTable Gdef { get; }
 
+    // Lookup runners are immutable per font (font + table + substitution flag), so build them once
+    // here instead of allocating a pair on every shape call. Null when the table is absent.
+    internal LookupRunner? GsubRunner { get; }
+    internal LookupRunner? GposRunner { get; }
+
     private readonly ConcurrentDictionary<(Tag Script, ShapeDirection Direction), ShapePlan> _plans = new();
 
     private ShapingFont(OpenTypeFont font, LayoutTable? gsub, LayoutTable? gpos, GdefTable gdef)
@@ -30,6 +35,8 @@ public sealed class ShapingFont
         Gsub = gsub;
         Gpos = gpos;
         Gdef = gdef;
+        GsubRunner = gsub is not null ? new LookupRunner(this, gsub, isSubstitution: true) : null;
+        GposRunner = gpos is not null ? new LookupRunner(this, gpos, isSubstitution: false) : null;
     }
 
     /// <summary>True when the font has a usable GSUB (ligatures/alternates possible).</summary>
@@ -71,6 +78,14 @@ public sealed class ShapingFont
     /// cached. The feature set comes from the shaper <see cref="Shaper.SelectShaper"/> picks for
     /// the script, so the plan always matches the shaper that will run it.</summary>
     public ShapePlan GetPlan(Tag script, ShapeDirection direction)
-        => _plans.GetOrAdd((script, direction),
-            key => ShapePlan.Build(Gsub, Gpos, key.Script, key.Direction, Shaper.SelectShaper(key.Script)));
+    {
+        var key = (script, direction);
+        // Cache-hit fast path: DrawText resolves a plan per run per frame, so skip the GetOrAdd
+        // machinery (and any delegate allocation) on the overwhelmingly common hit.
+        if (_plans.TryGetValue(key, out var plan)) return plan;
+        // Miss: build via a STATIC factory + state arg so no `this`-capturing delegate is allocated.
+        return _plans.GetOrAdd(key,
+            static (k, self) => ShapePlan.Build(self.Gsub, self.Gpos, k.Script, k.Direction, Shaper.SelectShaper(k.Script)),
+            this);
+    }
 }

@@ -58,8 +58,23 @@ public sealed class ShapeBuffer
     private byte[] _attachType = new byte[64];
     private int _length;
 
+    // Largest input codepoint added since Clear (AddText), and whether any GPOS mark/cursive
+    // attachment was recorded — cheap signals that let the shaper skip the canonical-mark passes
+    // for sub-U+0300 runs, and the finish pass's chain resolution when nothing attached.
+    private uint _maxCodepoint;
+    private bool _hasAttachments;
+
     /// <summary>Number of glyphs currently in the buffer.</summary>
     public int Length => _length;
+
+    /// <summary>The largest input codepoint added since <see cref="Clear"/> (see <see cref="AddText"/>).
+    /// The shaper skips canonical mark reordering/merging when this is below U+0300 (no marks live
+    /// below it), so a pure Basic-Latin run pays for neither pass.</summary>
+    internal uint MaxCodepoint => _maxCodepoint;
+
+    /// <summary>Whether any GPOS mark or cursive attachment was recorded this pass — lets the
+    /// positioning-finish pass skip chain resolution when nothing attached.</summary>
+    internal bool HasAttachments => _hasAttachments;
 
     /// <summary>Run direction. Set before shaping; RTL runs are reversed into visual
     /// order by <see cref="Shaper.Shape"/> (mirroring arrives with the H4 shapers).</summary>
@@ -92,7 +107,12 @@ public sealed class ShapeBuffer
     internal Span<byte> AttachTypeMutable => _attachType.AsSpan(0, _length);
 
     /// <summary>Reset to an empty buffer (keeps capacity). Direction is preserved.</summary>
-    public void Clear() => _length = 0;
+    public void Clear()
+    {
+        _length = 0;
+        _maxCodepoint = 0;
+        _hasAttachments = false;
+    }
 
     /// <summary>
     /// Append one run of text as unshaped codepoints. Ill-formed UTF-16 yields U+FFFD
@@ -108,6 +128,7 @@ public sealed class ShapeBuffer
         {
             EnsureCapacity(_length + 1);
             _glyphs[_length] = (uint)rune.Value;
+            if ((uint)rune.Value > _maxCodepoint) _maxCodepoint = (uint)rune.Value;
             _clusters[_length] = cluster;
             _masks[_length] = ushort.MaxValue; // all features apply until a shaper assigns per-glyph masks (H4)
             _classes[_length] = 0;
@@ -150,6 +171,7 @@ public sealed class ShapeBuffer
         _yOffsets[markIndex] = yOffset;
         _attachChain[markIndex] = parentIndex - markIndex;
         _attachType[markIndex] = (byte)AttachType.Mark;
+        _hasAttachments = true;
     }
 
     /// <summary>
@@ -164,6 +186,7 @@ public sealed class ShapeBuffer
         _yOffsets[childIndex] = yOffset;
         _attachChain[childIndex] = parentIndex - childIndex;
         _attachType[childIndex] = (byte)AttachType.Cursive;
+        _hasAttachments = true;
     }
 
     /// <summary>Set the GDEF glyph class at <paramref name="index"/> (used when a substitution

@@ -58,6 +58,66 @@ internal sealed class Coverage
 
     public bool Contains(uint glyphId) => GetCoverageIndex(glyphId) >= 0;
 
+    // ---- Span-direct probes (zero-alloc hot path) -------------------------------------
+    // The GSUB/GPOS appliers probe a fresh coverage table on every application attempt — and
+    // most attempts miss. Materializing a Coverage (object + a copied glyph/range array) per
+    // probe was the engine's dominant steady-state allocation; these binary-search the raw
+    // big-endian bytes in place instead, so a failed probe costs one O(log n) walk and no GC.
+    // Parse + the instance methods above are retained for GDEF's mark-glyph sets, which are
+    // parsed once per font and queried per glyph (materialize-once beats re-reading bytes there).
+
+    /// <summary>Coverage index for <paramref name="glyphId"/> in the coverage table at
+    /// <paramref name="offset"/> within <paramref name="table"/>, or −1 when not covered or the
+    /// data is malformed. Zero-allocation — no <see cref="Coverage"/> object is built.</summary>
+    public static int IndexOf(ReadOnlySpan<byte> table, int offset, uint glyphId)
+    {
+        if (offset <= 0 || offset + 4 > table.Length) return -1;
+        var format = ReadU16(table, offset);
+        if (format == 1)
+        {
+            var count = ReadU16(table, offset + 2);
+            var arr = offset + 4;
+            if (arr + count * 2 > table.Length) return -1;
+            int lo = 0, hi = count - 1;
+            while (lo <= hi)
+            {
+                var mid = (lo + hi) >>> 1;
+                var g = ReadU16(table, arr + mid * 2);
+                if (glyphId < g) hi = mid - 1;
+                else if (glyphId > g) lo = mid + 1;
+                else return mid;
+            }
+            return -1;
+        }
+        if (format == 2)
+        {
+            var rangeCount = ReadU16(table, offset + 2);
+            var arr = offset + 4;
+            if (arr + rangeCount * 6 > table.Length) return -1;
+            int lo = 0, hi = rangeCount - 1;
+            while (lo <= hi)
+            {
+                var mid = (lo + hi) >>> 1;
+                var rec = arr + mid * 6;               // range: start(2), end(2), startCoverageIndex(2)
+                var start = ReadU16(table, rec);
+                if (glyphId < start) { hi = mid - 1; continue; }
+                var end = ReadU16(table, rec + 2);
+                if (glyphId > end) { lo = mid + 1; continue; }
+                return ReadU16(table, rec + 4) + (int)(glyphId - start);
+            }
+            return -1;
+        }
+        return -1;
+    }
+
+    /// <summary>Whether <paramref name="glyphId"/> is covered by the table at <paramref name="offset"/>.
+    /// Zero-allocation span-direct form of <see cref="Contains(uint)"/>.</summary>
+    public static bool Covers(ReadOnlySpan<byte> table, int offset, uint glyphId)
+        => IndexOf(table, offset, glyphId) >= 0;
+
+    private static ushort ReadU16(ReadOnlySpan<byte> b, int offset)
+        => (ushort)((b[offset] << 8) | b[offset + 1]);
+
     /// <summary>
     /// Parse a coverage table at <paramref name="offset"/> within <paramref name="table"/>
     /// (offset relative to the containing subtable, per spec). Malformed data yields

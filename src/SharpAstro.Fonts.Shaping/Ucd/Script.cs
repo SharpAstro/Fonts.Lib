@@ -17,8 +17,9 @@ internal static partial class Script
     public static readonly Tag Inherited = new("zinh");
 
     /// <summary>The OpenType script tag of <paramref name="codepoint"/>. Codepoints not covered by
-    /// Scripts.txt (unassigned) resolve to <see cref="Common"/> so they attach to a neighbour.</summary>
-    public static Tag Get(uint codepoint) => new(UcdTables.RangeU32(Ranges, codepoint, Common.Value));
+    /// Scripts.txt (unassigned) resolve to <see cref="Common"/> so they attach to a neighbour.
+    /// Uses the generated <see cref="PageIndex"/> for an O(1) high-bit dispatch into <see cref="Ranges"/>.</summary>
+    public static Tag Get(uint codepoint) => new(UcdTables.RangeU32Paged(Ranges, PageIndex, codepoint, Common.Value));
 
     /// <summary>Whether <paramref name="script"/> lays out right-to-left. A fixed level-B set of the
     /// UI-relevant RTL scripts; full UAX #9 direction resolution is H6.</summary>
