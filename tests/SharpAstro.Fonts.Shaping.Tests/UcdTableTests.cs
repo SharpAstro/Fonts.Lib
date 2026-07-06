@@ -71,4 +71,37 @@ public class UcdTableTests
     [InlineData(0xF0000u, "zyyy")] // plane-15 unassigned — page beyond the table ⇒ Common
     public void Script_Get(uint codepoint, string expectedTag)
         => Script.Get(codepoint).ShouldBe(new Tag(expectedTag));
+
+    // Bidi_Class: strong (L/R/AL), weak (EN/AN/ET), neutral (WS/ON), an isolate (LRI), and an
+    // @missing default — U+05FF is unassigned but sits in the Hebrew block, so it resolves to R
+    // (not the global L default). That default is exactly why the table is built from
+    // DerivedBidiClass.txt rather than UnicodeData.txt field 4. BidiClass is internal, so pass int.
+    [Theory]
+    [InlineData(0x0041u, (int)BidiClass.L)]    // 'A'
+    [InlineData(0x05D0u, (int)BidiClass.R)]    // Hebrew alef
+    [InlineData(0x0627u, (int)BidiClass.AL)]   // Arabic alef
+    [InlineData(0x0030u, (int)BidiClass.EN)]   // '0'
+    [InlineData(0x0660u, (int)BidiClass.AN)]   // Arabic-Indic digit zero
+    [InlineData(0x0024u, (int)BidiClass.ET)]   // '$'
+    [InlineData(0x0020u, (int)BidiClass.WS)]   // space
+    [InlineData(0x0028u, (int)BidiClass.ON)]   // '('
+    [InlineData(0x2066u, (int)BidiClass.LRI)]  // LEFT-TO-RIGHT ISOLATE
+    [InlineData(0x05FFu, (int)BidiClass.R)]    // unassigned in the Hebrew block -> @missing R
+    public void BidiClass_Get(uint codepoint, int expected)
+        => ((int)Bidi.Get(codepoint)).ShouldBe(expected);
+
+    [Theory]
+    [InlineData(0x0028u, 0x0029u, true)]   // ( opens, pairs with )
+    [InlineData(0x0029u, 0x0028u, false)]  // ) closes, pairs with (
+    [InlineData(0x005Bu, 0x005Du, true)]   // [ opens, pairs with ]
+    public void BidiBrackets_TryGet(uint codepoint, uint expectedPair, bool expectedOpen)
+    {
+        BidiBrackets.TryGet(codepoint, out var paired, out var isOpen).ShouldBeTrue();
+        paired.ShouldBe(expectedPair);
+        isOpen.ShouldBe(expectedOpen);
+    }
+
+    [Fact]
+    public void BidiBrackets_TryGet_NonBracket_ReturnsFalse()
+        => BidiBrackets.TryGet(0x0041u, out _, out _).ShouldBeFalse();
 }

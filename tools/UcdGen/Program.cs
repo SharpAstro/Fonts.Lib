@@ -33,6 +33,8 @@ internal static class Program
         EmitJoining(dataDir, outDir);
         EmitMirroring(dataDir, outDir);
         EmitScript(dataDir, outDir);
+        EmitBidiClass(dataDir, outDir);
+        EmitBidiBrackets(dataDir, outDir);
         return 0;
     }
 
@@ -154,6 +156,97 @@ internal static class Program
         }
 
         WriteScriptTables(outDir, file, rangeBytes, coalesced.Count, pageBytes, pageCount);
+    }
+
+    // Bidi_Class short + long names → the byte enum in Ucd/Bidi.cs (BidiClass). DerivedBidiClass.txt
+    // uses short names in data lines and long names in the @missing default lines, so both map here.
+    private static readonly Dictionary<string, byte> BidiClassCode = new(StringComparer.Ordinal)
+    {
+        ["L"] = 0, ["Left_To_Right"] = 0,
+        ["R"] = 1, ["Right_To_Left"] = 1,
+        ["AL"] = 2, ["Arabic_Letter"] = 2,
+        ["EN"] = 3, ["European_Number"] = 3,
+        ["ES"] = 4, ["European_Separator"] = 4,
+        ["ET"] = 5, ["European_Terminator"] = 5,
+        ["AN"] = 6, ["Arabic_Number"] = 6,
+        ["CS"] = 7, ["Common_Separator"] = 7,
+        ["NSM"] = 8, ["Nonspacing_Mark"] = 8,
+        ["BN"] = 9, ["Boundary_Neutral"] = 9,
+        ["B"] = 10, ["Paragraph_Separator"] = 10,
+        ["S"] = 11, ["Segment_Separator"] = 11,
+        ["WS"] = 12, ["White_Space"] = 12,
+        ["ON"] = 13, ["Other_Neutral"] = 13,
+        ["LRE"] = 14, ["Left_To_Right_Embedding"] = 14,
+        ["LRO"] = 15, ["Left_To_Right_Override"] = 15,
+        ["RLE"] = 16, ["Right_To_Left_Embedding"] = 16,
+        ["RLO"] = 17, ["Right_To_Left_Override"] = 17,
+        ["PDF"] = 18, ["Pop_Directional_Format"] = 18,
+        ["LRI"] = 19, ["Left_To_Right_Isolate"] = 19,
+        ["RLI"] = 20, ["Right_To_Left_Isolate"] = 20,
+        ["FSI"] = 21, ["First_Strong_Isolate"] = 21,
+        ["PDI"] = 22, ["Pop_Directional_Isolate"] = 22,
+    };
+
+    // ---- DerivedBidiClass.txt: codepoint → Bidi_Class (UAX #9). The file carries @missing default
+    // ranges in COMMENTS (the global 0000..10FFFF; Left_To_Right, then RTL/AL/ET block overrides),
+    // which ReadRecords strips — so scan raw for those first, then apply the assigned data ranges on
+    // top. We emit only non-L ranges; L is the notFound default (matches the global @missing).
+    private static void EmitBidiClass(string dataDir, string outDir)
+    {
+        var file = Path.Combine(dataDir, "DerivedBidiClass.txt");
+        var cls = new byte[0x110000]; // 0 == L
+
+        foreach (var raw in File.ReadLines(file))
+        {
+            var at = raw.IndexOf("@missing:", StringComparison.Ordinal);
+            if (at < 0) continue;
+            var parts = raw[(at + 9)..].Split(';');
+            var (start, end) = ParseRange(parts[0].Trim());
+            var val = BidiClassCode[parts[1].Trim()];
+            for (var cp = start; cp <= end; cp++) cls[cp] = val;
+        }
+
+        foreach (var fields in ReadRecords(file))
+        {
+            var (start, end) = ParseRange(fields[0]);
+            var val = BidiClassCode[fields[1]];
+            for (var cp = start; cp <= end; cp++) cls[cp] = val;
+        }
+
+        var ranges = new List<(uint Start, uint End, byte Val)>();
+        uint runStart = 0;
+        for (uint cp = 1; cp <= 0x10FFFF; cp++)
+        {
+            if (cls[cp] == cls[runStart]) continue;
+            if (cls[runStart] != 0) ranges.Add((runStart, cp - 1, cls[runStart]));
+            runStart = cp;
+        }
+        if (cls[runStart] != 0) ranges.Add((runStart, 0x10FFFF, cls[runStart]));
+
+        WriteRangeTable(outDir, "Bidi", file, "Ranges", ranges, "bidi-class");
+    }
+
+    // ---- BidiBrackets.txt: "code; paired; type(o|c) # name". Packs paired codepoint (21 bits) with
+    // the open flag in bit 23, keyed by codepoint — the Bidi_Paired_Bracket(_Type) UAX #9 rule N0 needs.
+    private static void EmitBidiBrackets(string dataDir, string outDir)
+    {
+        var file = Path.Combine(dataDir, "BidiBrackets.txt");
+        var pairs = new List<(uint Cp, uint Packed)>();
+        foreach (var fields in ReadRecords(file))
+        {
+            var paired = ParseHex(fields[1]);
+            var open = fields[2] == "o";
+            pairs.Add((ParseHex(fields[0]), paired | (open ? 0x800000u : 0u)));
+        }
+        pairs.Sort((a, b) => a.Cp.CompareTo(b.Cp));
+
+        var bytes = new List<byte>(pairs.Count * 6);
+        foreach (var (cp, packed) in pairs)
+        {
+            WriteU24(bytes, cp);
+            WriteU24(bytes, packed);
+        }
+        WriteBlob(outDir, "BidiBrackets", file, "Pairs", bytes, pairs.Count, "bracket-pair");
     }
 
     // ---- shared helpers ----
