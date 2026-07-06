@@ -4,32 +4,39 @@ using SharpAstro.Fonts.Tables.Hmtx;
 namespace SharpAstro.Fonts.Shaping.Otl;
 
 /// <summary>
-/// GPOS positioning appliers. H1 built type 1 (single) and type 2 (pair); H2 adds the
-/// mark-attachment types — 4 (mark-to-base), 5 (mark-to-ligature), and 6 (mark-to-mark) —
-/// plus <see cref="Finish"/>, the post-lookup pass that turns the marks' anchor-relative
-/// offsets into on-line positions. Cursive (type 3) and contextual (7/8) arrive later.
+/// GPOS positioning appliers. H1 built type 1 (single) and 2 (pair); H2 added the
+/// mark-attachment types — 4 (mark-to-base), 5 (mark-to-ligature), 6 (mark-to-mark) — plus
+/// <see cref="Finish"/>, the post-lookup pass that turns anchor-relative offsets into
+/// on-line positions. H3 adds 3 (cursive) and 7/8 (context / chained context, via
+/// <see cref="SequenceContext"/>).
 ///
-/// <para>Mark positioning records a raw <c>base-anchor − mark-anchor</c> offset and an
-/// attachment link (<see cref="ShapeBuffer.AttachMark"/>); <see cref="Finish"/> then
-/// zeroes mark advances and propagates the offsets along the attachment chain (subtracting
-/// the advances between a mark and its base), mirroring HarfBuzz's order: apply GPOS →
-/// zero mark widths → propagate attachment offsets.</para>
+/// <para>Attachment types (mark, cursive) record a raw offset and an attachment link
+/// (<see cref="ShapeBuffer.AttachMark"/> / <see cref="ShapeBuffer.AttachCursive"/>);
+/// <see cref="Finish"/> then zeroes mark advances and propagates offsets along the chain,
+/// mirroring HarfBuzz's order: apply GPOS → zero mark widths → propagate attachment
+/// offsets.</para>
 ///
 /// <para>Spec: https://learn.microsoft.com/typography/opentype/spec/gpos</para>
 /// </summary>
 internal static class GposApplier
 {
-    public static bool Apply(Lookup lookup, ReadOnlySpan<byte> subtable,
-        ShapingFont font, ShapeBuffer buffer, ref int i)
-        => lookup.Type switch
+    public static bool Apply(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> subtable,
+        ShapeBuffer buffer, ref int i, int depth)
+    {
+        var font = runner.Font;
+        return lookup.Type switch
         {
             1 => ApplySingle(subtable, buffer, ref i),
             2 => ApplyPair(lookup, subtable, font, buffer, ref i),
+            3 => ApplyCursive(lookup, subtable, font, buffer, ref i),
             4 => ApplyMarkToBase(subtable, font, buffer, ref i),
             5 => ApplyMarkToLigature(subtable, font, buffer, ref i),
             6 => ApplyMarkToMark(lookup, subtable, font, buffer, ref i),
-            _ => false, // 3 (cursive) / 7 / 8 — later stages
+            7 => SequenceContext.ApplyContext(runner, lookup, subtable, buffer, ref i, depth),
+            8 => SequenceContext.ApplyChainedContext(runner, lookup, subtable, buffer, ref i, depth),
+            _ => false,
         };
+    }
 
     private static bool ApplySingle(ReadOnlySpan<byte> subtable, ShapeBuffer buffer, ref int i)
     {
@@ -195,6 +202,68 @@ internal static class GposApplier
         var vr = new BigEndianReader(subtable[cellOffset..]);
         v1 = ValueRecord.Read(ref vr, valueFormat1);
         v2 = ValueRecord.Read(ref vr, valueFormat2);
+        return true;
+    }
+
+    /// <summary>
+    /// Type 3 — cursive attachment (CursivePosFormat1). Aligns the current glyph's exit
+    /// anchor with the next glyph's entry anchor: the main-stream (advance) adjustment is
+    /// applied in place (by buffer direction), and the cross-stream (y) attachment chains
+    /// through <see cref="ShapeBuffer.AttachCursive"/> — which glyph moves is set by the
+    /// lookup's RIGHT_TO_LEFT flag. Mainly a connecting-script (Arabic) feature; no DejaVu
+    /// fixture exercises it, so it's unit-tested here and validated end-to-end at H4.
+    /// </summary>
+    private static bool ApplyCursive(Lookup lookup, ReadOnlySpan<byte> subtable,
+        ShapingFont font, ShapeBuffer buffer, ref int i)
+    {
+        if (subtable.Length < 6 || ReadU16(subtable, 0) != 1) return false;
+        var hmtx = font.Font.Hmtx;
+        if (hmtx is null) return false;
+        var entryExitCount = ReadU16(subtable, 4);
+        var cov = Coverage.Parse(subtable, ReadU16(subtable, 2));
+
+        var curIdx = cov.GetCoverageIndex(buffer.GlyphsMutable[i]);
+        if (curIdx < 0 || curIdx >= entryExitCount) return false;
+        // EntryExitRecord = entryAnchorOffset(2), exitAnchorOffset(2); we need cur's exit.
+        if (!Anchor.TryGet(subtable, ReadU16(subtable, 6 + curIdx * 4 + 2), out var exitX, out var exitY))
+            return false;
+
+        var next = GlyphIterator.Next(buffer, font.Gdef, lookup.Flags, lookup.MarkFilteringSet, i);
+        if (next < 0) return false;
+        var nextIdx = cov.GetCoverageIndex(buffer.GlyphsMutable[next]);
+        if (nextIdx < 0 || nextIdx >= entryExitCount) return false;
+        if (!Anchor.TryGet(subtable, ReadU16(subtable, 6 + nextIdx * 4), out var entryX, out var entryY))
+            return false;
+
+        var xo = buffer.XOffsetsMutable;
+        var adv = buffer.AdvDeltasMutable;
+
+        // Main-stream (x-advance) adjustment, by buffer direction. Advances are stored as
+        // deltas, so setting an absolute advance A means delta = A − hmtx advance.
+        if (buffer.Direction == ShapeDirection.LeftToRight)
+        {
+            adv[i] = exitX + xo[i] - hmtx.GetAdvanceWidth(buffer.GlyphsMutable[i]);
+            var d = entryX + xo[next];
+            adv[next] -= d;
+            xo[next] -= d;
+        }
+        else
+        {
+            var d = exitX + xo[i];
+            adv[i] -= d;
+            xo[i] -= d;
+            adv[next] = entryX + xo[next] - hmtx.GetAdvanceWidth(buffer.GlyphsMutable[next]);
+        }
+
+        // Cross-stream (y) attachment: the RIGHT_TO_LEFT flag decides which glyph moves
+        // (HarfBuzz roots the other and attaches this one to it).
+        var yDiff = entryY - exitY;
+        if ((lookup.Flags & LookupFlags.RightToLeft) != 0)
+            buffer.AttachCursive(i, next, yDiff);      // child = cur, parent = next
+        else
+            buffer.AttachCursive(next, i, -yDiff);     // child = next, parent = cur
+
+        i++;
         return true;
     }
 
@@ -388,9 +457,10 @@ internal static class GposApplier
         var xOffsets = buffer.XOffsetsMutable;
         var yOffsets = buffer.YOffsetsMutable;
         var chains = buffer.AttachChainMutable;
+        var attachTypes = buffer.AttachTypeMutable;
 
-        // 1) Zero mark advances first (so the propagation below never counts a mark's own
-        // advance). Advances are stored as deltas → "zero" means delta = −(hmtx advance).
+        // 1) Zero mark advances first (so the mark propagation below never counts a mark's
+        // own advance). Advances are stored as deltas → "zero" means delta = −(hmtx advance).
         if (hmtx is not null)
         {
             for (var k = 0; k < glyphs.Length; k++)
@@ -398,26 +468,35 @@ internal static class GposApplier
                     advDeltas[k] = -hmtx.GetAdvanceWidth(glyphs[k]);
         }
 
-        // 2) Resolve attachment chains (parent always precedes the mark in logical order).
+        // 2) Resolve attachment chains (mark and cursive).
         for (var k = 0; k < chains.Length; k++)
-            ResolveChain(k, hmtx, glyphs, advDeltas, xOffsets, yOffsets, chains);
+            ResolveChain(k, hmtx, glyphs, advDeltas, xOffsets, yOffsets, chains, attachTypes);
     }
 
     private static void ResolveChain(int i, HmtxTable? hmtx, ReadOnlySpan<uint> glyphs,
-        ReadOnlySpan<int> advDeltas, Span<int> xOffsets, Span<int> yOffsets, Span<int> chains)
+        ReadOnlySpan<int> advDeltas, Span<int> xOffsets, Span<int> yOffsets,
+        Span<int> chains, ReadOnlySpan<byte> attachTypes)
     {
         var chain = chains[i];
         if (chain == 0) return;
         chains[i] = 0; // clear before recursing — guards against a malformed cycle
-        var j = i + chain; // parent; j < i by construction (base/prev-mark precede the mark)
+        var j = i + chain; // parent
         if ((uint)j >= (uint)glyphs.Length) return;
 
-        ResolveChain(j, hmtx, glyphs, advDeltas, xOffsets, yOffsets, chains); // parent first
+        ResolveChain(j, hmtx, glyphs, advDeltas, xOffsets, yOffsets, chains, attachTypes); // parent first
 
+        if ((AttachType)attachTypes[i] == AttachType.Cursive)
+        {
+            // Cursive: inherit only the parent's cross-stream (y) offset — the main-stream
+            // advance was already adjusted in place. The parent may sit either side of the child.
+            yOffsets[i] += yOffsets[j];
+            return;
+        }
+
+        // Mark: fold in the parent's offset, then subtract the absolute advances between the
+        // parent and the mark (parent precedes the mark in logical order; horizontal → y-advance 0).
         xOffsets[i] += xOffsets[j];
         yOffsets[i] += yOffsets[j];
-
-        // Subtract the absolute advances between parent and mark (horizontal: y-advance is 0).
         if (hmtx is not null)
             for (var k = j; k < i; k++)
                 xOffsets[i] -= hmtx.GetAdvanceWidth(glyphs[k]) + advDeltas[k];

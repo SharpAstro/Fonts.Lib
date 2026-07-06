@@ -3,12 +3,13 @@ using SharpAstro.Fonts.IO;
 namespace SharpAstro.Fonts.Shaping.Otl;
 
 /// <summary>
-/// GSUB substitution appliers. H1 built type 1 (single) and type 4 (ligature); H2 adds
-/// type 2 (multiple) and type 3 (alternate). Each tries to apply one subtable at buffer
-/// position <c>i</c>; on success it mutates the buffer and advances <c>i</c> past the
-/// output, returning true. Substituted glyphs re-derive their GDEF class from the font so
-/// downstream mark processing sees the right classes (e.g. a <c>ccmp</c> that maps a
-/// codepoint to a mark glyph). Contextual/reverse (types 5/6/8) arrive in later stages.
+/// GSUB substitution appliers. H1 built type 1 (single) and 4 (ligature); H2 added 2
+/// (multiple) and 3 (alternate); H3 adds 5/6 (context / chained context, via
+/// <see cref="SequenceContext"/>) and 8 (reverse chaining, applied back-to-front by the
+/// runner). Each tries to apply one subtable at buffer position <c>i</c>; on success it
+/// mutates the buffer and advances <c>i</c> past the output, returning true. Substituted
+/// glyphs re-derive their GDEF class from the font so downstream mark processing sees the
+/// right classes (e.g. a <c>ccmp</c> that maps a codepoint to a mark glyph).
 ///
 /// <para>Spec: https://learn.microsoft.com/typography/opentype/spec/gsub</para>
 /// </summary>
@@ -22,16 +23,74 @@ internal static class GsubApplier
     // are 2–4 glyphs; the cap bounds the stack buffers for the output glyphs/classes).
     private const int MaxSequence = 32;
 
-    public static bool Apply(Lookup lookup, ReadOnlySpan<byte> subtable,
-        ShapingFont font, ShapeBuffer buffer, ref int i)
-        => lookup.Type switch
+    // Backtrack/lookahead sequences longer than this are ignored (bounds the stack buffers).
+    private const int MaxContext = 64;
+
+    public static bool Apply(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> subtable,
+        ShapeBuffer buffer, ref int i, int depth)
+    {
+        var font = runner.Font;
+        return lookup.Type switch
         {
             1 => ApplySingle(subtable, font, buffer, ref i),
             2 => ApplyMultiple(subtable, font, buffer, ref i),
             3 => ApplyAlternate(subtable, font, buffer, ref i),
             4 => ApplyLigature(lookup, subtable, font, buffer, ref i),
-            _ => false, // 5/6/8 — later stages
+            5 => SequenceContext.ApplyContext(runner, lookup, subtable, buffer, ref i, depth),
+            6 => SequenceContext.ApplyChainedContext(runner, lookup, subtable, buffer, ref i, depth),
+            _ => false, // 8 (reverse chaining) is applied back-to-front via ApplyReverseChain
         };
+    }
+
+    /// <summary>
+    /// Type 8 — Reverse Chaining Contextual Single Substitution, applied at a fixed position
+    /// by the runner's back-to-front pass (no <c>ref i</c> — the reverse loop steps the index).
+    /// Format 1: the current glyph must be covered and the backtrack/lookahead coverage
+    /// sequences must match (skip-aware); on success the glyph is replaced in place
+    /// (1→1) by <c>substituteGlyphIDs[coverageIndex]</c>. It has no seqLookupRecords —
+    /// unlike the forward context types, it substitutes directly.
+    /// </summary>
+    public static bool ApplyReverseChain(LookupRunner runner, Lookup lookup,
+        ReadOnlySpan<byte> subtable, ShapeBuffer buffer, int i)
+    {
+        if (subtable.Length < 6 || ReadU16(subtable, 0) != 1) return false;
+        var font = runner.Font;
+        var covIdx = Coverage.Parse(subtable, ReadU16(subtable, 2)).GetCoverageIndex(buffer.GlyphsMutable[i]);
+        if (covIdx < 0) return false;
+
+        var pos = 4;
+        var backtrackCount = ReadU16(subtable, pos);
+        pos += 2;
+        var backtrackCovPos = pos;
+        pos += backtrackCount * 2;
+        if (pos + 2 > subtable.Length) return false;
+        var lookaheadCount = ReadU16(subtable, pos);
+        pos += 2;
+        var lookaheadCovPos = pos;
+        pos += lookaheadCount * 2;
+        if (pos + 2 > subtable.Length) return false;
+        var glyphCount = ReadU16(subtable, pos);
+        pos += 2;
+        var substitutesPos = pos;
+        if (covIdx >= glyphCount || substitutesPos + glyphCount * 2 > subtable.Length) return false;
+        if (backtrackCount > MaxContext || lookaheadCount > MaxContext) return false;
+
+        Span<int> backPos = stackalloc int[MaxContext];
+        if (!SequenceContext.CollectBackward(font, lookup, buffer, i, backtrackCount, backPos)) return false;
+        for (var k = 0; k < backtrackCount; k++)
+            if (!Coverage.Parse(subtable, ReadU16(subtable, backtrackCovPos + k * 2)).Contains(buffer.GlyphsMutable[backPos[k]]))
+                return false;
+
+        Span<int> aheadPos = stackalloc int[MaxContext];
+        if (!SequenceContext.CollectForward(font, lookup, buffer, i, lookaheadCount, aheadPos)) return false;
+        for (var k = 0; k < lookaheadCount; k++)
+            if (!Coverage.Parse(subtable, ReadU16(subtable, lookaheadCovPos + k * 2)).Contains(buffer.GlyphsMutable[aheadPos[k]]))
+                return false;
+
+        var newGid = ReadU16(subtable, substitutesPos + covIdx * 2);
+        buffer.Substitute(i, newGid, font.Gdef.GetGlyphClass(newGid));
+        return true;
+    }
 
     private static bool ApplySingle(ReadOnlySpan<byte> subtable, ShapingFont font, ShapeBuffer buffer, ref int i)
     {
