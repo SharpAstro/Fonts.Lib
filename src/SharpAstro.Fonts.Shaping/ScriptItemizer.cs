@@ -44,6 +44,17 @@ public static class ScriptItemizer
         runs.Clear();
         if (text.IsEmpty) return;
 
+        // Fast path: a line entirely within Basic Latin .. Latin Extended-B (<= U+024F) is a single
+        // Latin/LTR run — every codepoint in that range is Latin or Common, all left-to-right, and
+        // there are no combining marks (which start at U+0300). One vectorized scan replaces the
+        // per-rune Script.Get walk for the overwhelmingly common plain-UI-text case. (Matches the
+        // general path below, whose first real script for such text is always latn == DefaultScript.)
+        if (!text.ContainsAnyExceptInRange('\u0000', '\u024F'))
+        {
+            runs.Add(new ScriptRun(0, text.Length, DefaultScript, ShapeDirection.LeftToRight));
+            return;
+        }
+
         var runStart = 0;
         var haveScript = false;
         var current = Script.Common; // the open run's resolved script, once haveScript is set

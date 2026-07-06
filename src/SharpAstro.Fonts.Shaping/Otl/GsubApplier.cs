@@ -55,7 +55,7 @@ internal static class GsubApplier
     {
         if (subtable.Length < 6 || ReadU16(subtable, 0) != 1) return false;
         var font = runner.Font;
-        var covIdx = Coverage.Parse(subtable, ReadU16(subtable, 2)).GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var covIdx = Coverage.IndexOf(subtable, ReadU16(subtable, 2), buffer.GlyphsMutable[i]);
         if (covIdx < 0) return false;
 
         var pos = 4;
@@ -78,13 +78,13 @@ internal static class GsubApplier
         Span<int> backPos = stackalloc int[MaxContext];
         if (!SequenceContext.CollectBackward(font, lookup, buffer, i, backtrackCount, backPos)) return false;
         for (var k = 0; k < backtrackCount; k++)
-            if (!Coverage.Parse(subtable, ReadU16(subtable, backtrackCovPos + k * 2)).Contains(buffer.GlyphsMutable[backPos[k]]))
+            if (!Coverage.Covers(subtable, ReadU16(subtable, backtrackCovPos + k * 2), buffer.GlyphsMutable[backPos[k]]))
                 return false;
 
         Span<int> aheadPos = stackalloc int[MaxContext];
         if (!SequenceContext.CollectForward(font, lookup, buffer, i, lookaheadCount, aheadPos)) return false;
         for (var k = 0; k < lookaheadCount; k++)
-            if (!Coverage.Parse(subtable, ReadU16(subtable, lookaheadCovPos + k * 2)).Contains(buffer.GlyphsMutable[aheadPos[k]]))
+            if (!Coverage.Covers(subtable, ReadU16(subtable, lookaheadCovPos + k * 2), buffer.GlyphsMutable[aheadPos[k]]))
                 return false;
 
         var newGid = ReadU16(subtable, substitutesPos + covIdx * 2);
@@ -98,10 +98,8 @@ internal static class GsubApplier
         var r = new BigEndianReader(subtable);
         var format = r.ReadUInt16();
         var coverageOffset = r.ReadUInt16();
-        var cov = Coverage.Parse(subtable, coverageOffset);
-
         var gid = buffer.GlyphsMutable[i];
-        var covIdx = cov.GetCoverageIndex(gid);
+        var covIdx = Coverage.IndexOf(subtable, coverageOffset, gid);
         if (covIdx < 0) return false;
 
         if (format == 1)
@@ -144,8 +142,7 @@ internal static class GsubApplier
         var coverageOffset = r.ReadUInt16();
         var sequenceCount = r.ReadUInt16();
 
-        var cov = Coverage.Parse(subtable, coverageOffset);
-        var covIdx = cov.GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var covIdx = Coverage.IndexOf(subtable, coverageOffset, buffer.GlyphsMutable[i]);
         if (covIdx < 0 || covIdx >= sequenceCount) return false;
 
         var seqOffsetPos = 6 + covIdx * 2;
@@ -187,8 +184,7 @@ internal static class GsubApplier
         var coverageOffset = r.ReadUInt16();
         var alternateSetCount = r.ReadUInt16();
 
-        var cov = Coverage.Parse(subtable, coverageOffset);
-        var covIdx = cov.GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var covIdx = Coverage.IndexOf(subtable, coverageOffset, buffer.GlyphsMutable[i]);
         if (covIdx < 0 || covIdx >= alternateSetCount) return false;
 
         var setOffsetPos = 6 + covIdx * 2;
@@ -216,8 +212,7 @@ internal static class GsubApplier
         var coverageOffset = r.ReadUInt16();
         var ligatureSetCount = r.ReadUInt16();
 
-        var cov = Coverage.Parse(subtable, coverageOffset);
-        var covIdx = cov.GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var covIdx = Coverage.IndexOf(subtable, coverageOffset, buffer.GlyphsMutable[i]);
         if (covIdx < 0 || covIdx >= ligatureSetCount) return false;
 
         // ligatureSetOffsets[covIdx] (relative to subtable start).

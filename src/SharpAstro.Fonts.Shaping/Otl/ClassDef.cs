@@ -49,6 +49,51 @@ internal sealed class ClassDef
         return 0;
     }
 
+    // ---- Span-direct probe (zero-alloc hot path) --------------------------------------
+    // Class-based GPOS pair kerning and contextual class matching probe a ClassDef per
+    // application attempt; span-direct avoids materializing a ClassDef + array each time. Parse +
+    // the instance GetClass are retained for GDEF's glyph/mark-attach classes (parsed once,
+    // queried per glyph, where a materialized array indexes faster than re-reading bytes).
+
+    /// <summary>Class of <paramref name="glyphId"/> in the ClassDef at <paramref name="offset"/>
+    /// within <paramref name="table"/> (0 = unlisted / malformed). Zero-allocation.</summary>
+    public static int ClassOf(ReadOnlySpan<byte> table, int offset, uint glyphId)
+    {
+        if (offset <= 0 || offset + 4 > table.Length) return 0;
+        var format = ReadU16(table, offset);
+        if (format == 1)
+        {
+            var startGlyph = ReadU16(table, offset + 2);
+            var count = ReadU16(table, offset + 4);
+            var arr = offset + 6;
+            if (arr + count * 2 > table.Length) return 0;
+            var idx = (long)glyphId - startGlyph;
+            return (ulong)idx < (ulong)count ? ReadU16(table, arr + (int)idx * 2) : 0;
+        }
+        if (format == 2)
+        {
+            var rangeCount = ReadU16(table, offset + 2);
+            var arr = offset + 4;
+            if (arr + rangeCount * 6 > table.Length) return 0;
+            int lo = 0, hi = rangeCount - 1;
+            while (lo <= hi)
+            {
+                var mid = (lo + hi) >>> 1;
+                var rec = arr + mid * 6;               // range: start(2), end(2), class(2)
+                var start = ReadU16(table, rec);
+                if (glyphId < start) { hi = mid - 1; continue; }
+                var end = ReadU16(table, rec + 2);
+                if (glyphId > end) { lo = mid + 1; continue; }
+                return ReadU16(table, rec + 4);
+            }
+            return 0;
+        }
+        return 0;
+    }
+
+    private static ushort ReadU16(ReadOnlySpan<byte> b, int offset)
+        => (ushort)((b[offset] << 8) | b[offset + 1]);
+
     /// <summary>
     /// Parse a ClassDef at <paramref name="offset"/> within <paramref name="table"/>
     /// (subtable-relative offset, per spec). Malformed data yields <see cref="Empty"/>.

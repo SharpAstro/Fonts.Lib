@@ -46,8 +46,7 @@ internal static class GposApplier
         var coverageOffset = r.ReadUInt16();
         var valueFormat = r.ReadUInt16();
 
-        var cov = Coverage.Parse(subtable, coverageOffset);
-        var covIdx = cov.GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var covIdx = Coverage.IndexOf(subtable, coverageOffset, buffer.GlyphsMutable[i]);
         if (covIdx < 0) return false;
 
         ValueRecord value;
@@ -129,8 +128,7 @@ internal static class GposApplier
         valueFormat2 = r.ReadUInt16();
         var pairSetCount = r.ReadUInt16();
 
-        var cov = Coverage.Parse(subtable, coverageOffset);
-        var covIdx = cov.GetCoverageIndex(firstGlyph);
+        var covIdx = Coverage.IndexOf(subtable, coverageOffset, firstGlyph);
         if (covIdx < 0 || covIdx >= pairSetCount) return false;
 
         var setOffsetPos = 10 + covIdx * 2;
@@ -183,13 +181,10 @@ internal static class GposApplier
         var class2Count = r.ReadUInt16();
 
         // First glyph must be covered (spec: coverage lists all first glyphs of the subtable).
-        var cov = Coverage.Parse(subtable, coverageOffset);
-        if (cov.GetCoverageIndex(firstGlyph) < 0) return false;
+        if (Coverage.IndexOf(subtable, coverageOffset, firstGlyph) < 0) return false;
 
-        var classDef1 = ClassDef.Parse(subtable, classDef1Offset);
-        var classDef2 = ClassDef.Parse(subtable, classDef2Offset);
-        var c1 = classDef1.GetClass(firstGlyph);
-        var c2 = classDef2.GetClass(secondGlyph);
+        var c1 = ClassDef.ClassOf(subtable, classDef1Offset, firstGlyph);
+        var c2 = ClassDef.ClassOf(subtable, classDef2Offset, secondGlyph);
         if (c1 >= class1Count || c2 >= class2Count) return false;
 
         var v1Size = ValueRecord.Size(valueFormat1);
@@ -220,9 +215,9 @@ internal static class GposApplier
         var hmtx = font.Font.Hmtx;
         if (hmtx is null) return false;
         var entryExitCount = ReadU16(subtable, 4);
-        var cov = Coverage.Parse(subtable, ReadU16(subtable, 2));
+        var covOffset = ReadU16(subtable, 2);
 
-        var curIdx = cov.GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var curIdx = Coverage.IndexOf(subtable, covOffset, buffer.GlyphsMutable[i]);
         if (curIdx < 0 || curIdx >= entryExitCount) return false;
         // EntryExitRecord = entryAnchorOffset(2), exitAnchorOffset(2); we need cur's exit.
         if (!Anchor.TryGet(subtable, ReadU16(subtable, 6 + curIdx * 4 + 2), out var exitX, out var exitY))
@@ -230,7 +225,7 @@ internal static class GposApplier
 
         var next = GlyphIterator.Next(buffer, font.Gdef, lookup.Flags, lookup.MarkFilteringSet, i);
         if (next < 0) return false;
-        var nextIdx = cov.GetCoverageIndex(buffer.GlyphsMutable[next]);
+        var nextIdx = Coverage.IndexOf(subtable, covOffset, buffer.GlyphsMutable[next]);
         if (nextIdx < 0 || nextIdx >= entryExitCount) return false;
         if (!Anchor.TryGet(subtable, ReadU16(subtable, 6 + nextIdx * 4), out var entryX, out var entryY))
             return false;
@@ -283,14 +278,14 @@ internal static class GposApplier
         var markArrayOffset = ReadU16(subtable, 8);
         var baseArrayOffset = ReadU16(subtable, 10);
 
-        var markIdx = Coverage.Parse(subtable, markCoverageOffset).GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var markIdx = Coverage.IndexOf(subtable, markCoverageOffset, buffer.GlyphsMutable[i]);
         if (markIdx < 0) return false;
 
         // HarfBuzz forces IgnoreMarks for the base search regardless of the lookup's flags.
         var basePos = GlyphIterator.Prev(buffer, font.Gdef, LookupFlags.IgnoreMarks, 0, i);
         if (basePos < 0) return false;
 
-        var baseIdx = Coverage.Parse(subtable, baseCoverageOffset).GetCoverageIndex(buffer.GlyphsMutable[basePos]);
+        var baseIdx = Coverage.IndexOf(subtable, baseCoverageOffset, buffer.GlyphsMutable[basePos]);
         if (baseIdx < 0) return false;
 
         if (!TryReadMark(subtable, markArrayOffset, markIdx, markClassCount, out var markClass, out var mx, out var my))
@@ -319,13 +314,13 @@ internal static class GposApplier
         var markArrayOffset = ReadU16(subtable, 8);
         var ligArrayOffset = ReadU16(subtable, 10);
 
-        var markIdx = Coverage.Parse(subtable, markCoverageOffset).GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var markIdx = Coverage.IndexOf(subtable, markCoverageOffset, buffer.GlyphsMutable[i]);
         if (markIdx < 0) return false;
 
         var ligPos = GlyphIterator.Prev(buffer, font.Gdef, LookupFlags.IgnoreMarks, 0, i);
         if (ligPos < 0) return false;
 
-        var ligIdx = Coverage.Parse(subtable, ligCoverageOffset).GetCoverageIndex(buffer.GlyphsMutable[ligPos]);
+        var ligIdx = Coverage.IndexOf(subtable, ligCoverageOffset, buffer.GlyphsMutable[ligPos]);
         if (ligIdx < 0) return false;
 
         if (!TryReadMark(subtable, markArrayOffset, markIdx, markClassCount, out var markClass, out var mx, out var my))
@@ -349,7 +344,7 @@ internal static class GposApplier
         var mark1ArrayOffset = ReadU16(subtable, 8);
         var mark2ArrayOffset = ReadU16(subtable, 10);
 
-        var mark1Idx = Coverage.Parse(subtable, mark1CoverageOffset).GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var mark1Idx = Coverage.IndexOf(subtable, mark1CoverageOffset, buffer.GlyphsMutable[i]);
         if (mark1Idx < 0) return false;
 
         // The base mark is the immediately preceding glyph WITH marks visible (HarfBuzz
@@ -358,7 +353,7 @@ internal static class GposApplier
         var prev = GlyphIterator.Prev(buffer, font.Gdef, prevFlags, lookup.MarkFilteringSet, i);
         if (prev < 0 || (GlyphClass)buffer.ClassesMutable[prev] != GlyphClass.Mark) return false;
 
-        var mark2Idx = Coverage.Parse(subtable, mark2CoverageOffset).GetCoverageIndex(buffer.GlyphsMutable[prev]);
+        var mark2Idx = Coverage.IndexOf(subtable, mark2CoverageOffset, buffer.GlyphsMutable[prev]);
         if (mark2Idx < 0) return false;
 
         if (!TryReadMark(subtable, mark1ArrayOffset, mark1Idx, markClassCount, out var markClass, out var mx, out var my))
@@ -468,9 +463,11 @@ internal static class GposApplier
                     advDeltas[k] = -hmtx.GetAdvanceWidth(glyphs[k]);
         }
 
-        // 2) Resolve attachment chains (mark and cursive).
-        for (var k = 0; k < chains.Length; k++)
-            ResolveChain(k, hmtx, glyphs, advDeltas, xOffsets, yOffsets, chains, attachTypes);
+        // 2) Resolve attachment chains (mark and cursive) — skipped entirely when no GPOS
+        // attachment was recorded (the common case: no marks/cursive), avoiding the per-glyph walk.
+        if (buffer.HasAttachments)
+            for (var k = 0; k < chains.Length; k++)
+                ResolveChain(k, hmtx, glyphs, advDeltas, xOffsets, yOffsets, chains, attachTypes);
     }
 
     private static void ResolveChain(int i, HmtxTable? hmtx, ReadOnlySpan<uint> glyphs,

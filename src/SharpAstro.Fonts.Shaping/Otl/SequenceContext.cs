@@ -38,7 +38,7 @@ internal static class SequenceContext
         ShapeBuffer buffer, ref int i, int depth)
     {
         if (subtable.Length < 6) return false;
-        var covIdx = Coverage.Parse(subtable, ReadU16(subtable, 2)).GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var covIdx = Coverage.IndexOf(subtable, ReadU16(subtable, 2), buffer.GlyphsMutable[i]);
         if (covIdx < 0) return false;
         var ruleSetCount = ReadU16(subtable, 4);
         if (covIdx >= ruleSetCount) return false;
@@ -50,7 +50,7 @@ internal static class SequenceContext
         ShapeBuffer buffer, ref int i, int depth)
     {
         if (subtable.Length < 8) return false;
-        if (!Coverage.Parse(subtable, ReadU16(subtable, 2)).Contains(buffer.GlyphsMutable[i])) return false;
+        if (!Coverage.Covers(subtable, ReadU16(subtable, 2), buffer.GlyphsMutable[i])) return false;
         var classDef = ClassDef.Parse(subtable, ReadU16(subtable, 4));
         var cls = classDef.GetClass(buffer.GlyphsMutable[i]);
         var ruleSetCount = ReadU16(subtable, 6);
@@ -95,7 +95,7 @@ internal static class SequenceContext
         ShapeBuffer buffer, ref int i, int depth)
     {
         if (subtable.Length < 6) return false;
-        var covIdx = Coverage.Parse(subtable, ReadU16(subtable, 2)).GetCoverageIndex(buffer.GlyphsMutable[i]);
+        var covIdx = Coverage.IndexOf(subtable, ReadU16(subtable, 2), buffer.GlyphsMutable[i]);
         if (covIdx < 0) return false;
         var ruleSetCount = ReadU16(subtable, 4);
         if (covIdx >= ruleSetCount) return false;
@@ -107,7 +107,7 @@ internal static class SequenceContext
         ShapeBuffer buffer, ref int i, int depth)
     {
         if (subtable.Length < 12) return false;
-        if (!Coverage.Parse(subtable, ReadU16(subtable, 2)).Contains(buffer.GlyphsMutable[i])) return false;
+        if (!Coverage.Covers(subtable, ReadU16(subtable, 2), buffer.GlyphsMutable[i])) return false;
         var backtrackClasses = ClassDef.Parse(subtable, ReadU16(subtable, 4));
         var inputClasses = ClassDef.Parse(subtable, ReadU16(subtable, 6));
         var lookaheadClasses = ClassDef.Parse(subtable, ReadU16(subtable, 8));
@@ -144,13 +144,13 @@ internal static class SequenceContext
         Span<int> backPos = stackalloc int[MaxSeq];
         if (!CollectBackward(font, lookup, buffer, i, backtrackCount, backPos)) return false;
         for (var k = 0; k < backtrackCount; k++)
-            if (!Coverage.Parse(subtable, ReadU16(subtable, backtrackCovPos + k * 2)).Contains(buffer.GlyphsMutable[backPos[k]]))
+            if (!Coverage.Covers(subtable, ReadU16(subtable, backtrackCovPos + k * 2), buffer.GlyphsMutable[backPos[k]]))
                 return false;
 
         Span<int> aheadPos = stackalloc int[MaxSeq];
         if (!CollectForward(font, lookup, buffer, inputPos[inputCount - 1], lookaheadCount, aheadPos)) return false;
         for (var k = 0; k < lookaheadCount; k++)
-            if (!Coverage.Parse(subtable, ReadU16(subtable, lookaheadCovPos + k * 2)).Contains(buffer.GlyphsMutable[aheadPos[k]]))
+            if (!Coverage.Covers(subtable, ReadU16(subtable, lookaheadCovPos + k * 2), buffer.GlyphsMutable[aheadPos[k]]))
                 return false;
 
         var delta = ApplyLookupRecords(runner, subtable[recordsPos..], recordCount, inputPos[..inputCount], buffer, depth);
@@ -280,11 +280,11 @@ internal static class SequenceContext
         int covArrayPos, int count, ShapeBuffer buffer, int from, Span<int> inputPos)
     {
         inputPos[0] = from;
-        if (!Coverage.Parse(subtable, ReadU16(subtable, covArrayPos)).Contains(buffer.GlyphsMutable[from]))
+        if (!Coverage.Covers(subtable, ReadU16(subtable, covArrayPos), buffer.GlyphsMutable[from]))
             return false;
         if (!CollectForward(runner.Font, lookup, buffer, from, count - 1, inputPos[1..])) return false;
         for (var k = 1; k < count; k++)
-            if (!Coverage.Parse(subtable, ReadU16(subtable, covArrayPos + k * 2)).Contains(buffer.GlyphsMutable[inputPos[k]]))
+            if (!Coverage.Covers(subtable, ReadU16(subtable, covArrayPos + k * 2), buffer.GlyphsMutable[inputPos[k]]))
                 return false;
         return true;
     }

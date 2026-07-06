@@ -16,5 +16,8 @@ internal static partial class CanonicalCombiningClass
     /// <summary>The canonical combining class of <paramref name="codepoint"/>: 0 for starters
     /// (base letters, spaces, and any codepoint not in the table), &gt;0 for combining marks
     /// that participate in canonical ordering.</summary>
-    public static byte Get(uint codepoint) => UcdTables.RangeByte(Ranges, codepoint, notFound: 0);
+    public static byte Get(uint codepoint)
+        // U+0300 (COMBINING GRAVE ACCENT) is the first codepoint with a nonzero CCC; everything
+        // below is a starter, so skip the table probe for the common Latin/ASCII case.
+        => codepoint < 0x300 ? (byte)0 : UcdTables.RangeByte(Ranges, codepoint, notFound: 0);
 }
