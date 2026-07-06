@@ -12,7 +12,8 @@ Silicon, Linux ARM64). Do not use platform-specific intrinsics
 
 ```bash
 dotnet build -c Release
-dotnet test tests/SharpAstro.Fonts.Tests -c Release
+dotnet test -c Release                              # whole solution (core + shaping)
+dotnet test tests/SharpAstro.Fonts.Tests -c Release # just the core suite (fast iteration)
 ```
 
 ## Benchmarks
