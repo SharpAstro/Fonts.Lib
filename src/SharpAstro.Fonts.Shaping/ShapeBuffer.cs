@@ -11,6 +11,18 @@ public enum ShapeDirection
     RightToLeft,
 }
 
+/// <summary>How a glyph is attached to its <see cref="ShapeBuffer"/> chain parent, so the
+/// positioning-finish pass propagates it correctly: a <see cref="Mark"/> folds in the
+/// parent's offset and subtracts the advances between them; a <see cref="Cursive"/> glyph
+/// only inherits the parent's cross-stream (y) offset (its main-stream advance is adjusted
+/// in place when the attachment is recorded).</summary>
+internal enum AttachType : byte
+{
+    None = 0,
+    Mark = 1,
+    Cursive = 2,
+}
+
 /// <summary>
 /// The mutable glyph run a shaper works on: parallel arrays of glyph data, reusable
 /// across calls (geometric growth, no steady-state allocation). Fill it with
@@ -39,10 +51,11 @@ public sealed class ShapeBuffer
     private int[] _advDeltas = new int[64];
     private int[] _xOffsets = new int[64];
     private int[] _yOffsets = new int[64];
-    // Relative buffer offset to a glyph's mark-attachment parent (0 = not attached).
-    // Set by GPOS mark positioning, then consumed (zeroed) by the positioning-finish
-    // propagation pass — HarfBuzz's attach_chain, same delta model.
+    // Relative buffer offset to a glyph's attachment parent (0 = not attached), and the
+    // kind of attachment. Set by GPOS mark/cursive positioning, then consumed (zeroed) by
+    // the positioning-finish propagation pass — HarfBuzz's attach_chain, same delta model.
     private int[] _attachChain = new int[64];
+    private byte[] _attachType = new byte[64];
     private int _length;
 
     /// <summary>Number of glyphs currently in the buffer.</summary>
@@ -76,6 +89,7 @@ public sealed class ShapeBuffer
     internal Span<int> XOffsetsMutable => _xOffsets.AsSpan(0, _length);
     internal Span<int> YOffsetsMutable => _yOffsets.AsSpan(0, _length);
     internal Span<int> AttachChainMutable => _attachChain.AsSpan(0, _length);
+    internal Span<byte> AttachTypeMutable => _attachType.AsSpan(0, _length);
 
     /// <summary>Reset to an empty buffer (keeps capacity). Direction is preserved.</summary>
     public void Clear() => _length = 0;
@@ -101,6 +115,7 @@ public sealed class ShapeBuffer
             _xOffsets[_length] = 0;
             _yOffsets[_length] = 0;
             _attachChain[_length] = 0;
+            _attachType[_length] = 0;
             _length++;
             cluster += rune.Utf16SequenceLength;
         }
@@ -134,6 +149,21 @@ public sealed class ShapeBuffer
         _xOffsets[markIndex] = xOffset;
         _yOffsets[markIndex] = yOffset;
         _attachChain[markIndex] = parentIndex - markIndex;
+        _attachType[markIndex] = (byte)AttachType.Mark;
+    }
+
+    /// <summary>
+    /// Record a GPOS cursive attachment (type 3): <paramref name="childIndex"/> connects to
+    /// <paramref name="parentIndex"/> so their entry/exit anchors align on the cross-stream
+    /// (y) axis. The main-stream (advance) adjustment is applied in place by the caller; only
+    /// the y-offset chains, so the finish pass inherits the parent's y without subtracting
+    /// advances.
+    /// </summary>
+    internal void AttachCursive(int childIndex, int parentIndex, int yOffset)
+    {
+        _yOffsets[childIndex] = yOffset;
+        _attachChain[childIndex] = parentIndex - childIndex;
+        _attachType[childIndex] = (byte)AttachType.Cursive;
     }
 
     /// <summary>Set the GDEF glyph class at <paramref name="index"/> (used when a substitution
@@ -176,6 +206,7 @@ public sealed class ShapeBuffer
             _xOffsets[at] = 0;
             _yOffsets[at] = 0;
             _attachChain[at] = 0;
+            _attachType[at] = 0;
         }
         _length += delta;
     }
@@ -192,6 +223,7 @@ public sealed class ShapeBuffer
         (_xOffsets[a], _xOffsets[b]) = (_xOffsets[b], _xOffsets[a]);
         (_yOffsets[a], _yOffsets[b]) = (_yOffsets[b], _yOffsets[a]);
         (_attachChain[a], _attachChain[b]) = (_attachChain[b], _attachChain[a]);
+        (_attachType[a], _attachType[b]) = (_attachType[b], _attachType[a]);
     }
 
     /// <summary>
@@ -244,6 +276,7 @@ public sealed class ShapeBuffer
         _xOffsets[to] = _xOffsets[from];
         _yOffsets[to] = _yOffsets[from];
         _attachChain[to] = _attachChain[from];
+        _attachType[to] = _attachType[from];
     }
 
     /// <summary>Reverse the run in place (logical → visual order for RTL). All parallel arrays reverse together.</summary>
@@ -257,6 +290,7 @@ public sealed class ShapeBuffer
         Array.Reverse(_xOffsets, 0, _length);
         Array.Reverse(_yOffsets, 0, _length);
         Array.Reverse(_attachChain, 0, _length);
+        Array.Reverse(_attachType, 0, _length);
     }
 
     private void EnsureCapacity(int needed)
@@ -271,5 +305,6 @@ public sealed class ShapeBuffer
         Array.Resize(ref _xOffsets, newSize);
         Array.Resize(ref _yOffsets, newSize);
         Array.Resize(ref _attachChain, newSize);
+        Array.Resize(ref _attachType, newSize);
     }
 }

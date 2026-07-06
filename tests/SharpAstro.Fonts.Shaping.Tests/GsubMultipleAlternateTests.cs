@@ -39,6 +39,15 @@ public class GsubMultipleAlternateTests
         Subtables = [], // Apply() takes the subtable span directly; this array is unused here
     };
 
+    // Drive the applier through a runner (its GSUB table is only used for runner.Font here;
+    // multiple/alternate don't nest, so the table is never walked).
+    private static bool Apply(byte[] subtable, ShapeBuffer buffer, ref int i, ushort type)
+    {
+        var font = Font();
+        var runner = new LookupRunner(font, font.Gsub!, isSubstitution: true);
+        return GsubApplier.Apply(runner, LookupOf(type), subtable, buffer, ref i, depth: 0);
+    }
+
     [Fact]
     public void MultipleSubst_ExpandsOneGlyphToSequence_SharingTheCluster()
     {
@@ -47,7 +56,7 @@ public class GsubMultipleAlternateTests
         var buffer = BufferOf(100, 105); // trailing glyph proves the tail shifts right
         var i = 0;
 
-        GsubApplier.Apply(LookupOf(2), subtable, Font(), buffer, ref i).ShouldBeTrue();
+        Apply(subtable, buffer, ref i, 2).ShouldBeTrue();
 
         buffer.Length.ShouldBe(4);
         buffer.GlyphIds.ToArray().ShouldBe([200u, 201u, 202u, 105u]);
@@ -64,7 +73,7 @@ public class GsubMultipleAlternateTests
         var buffer = BufferOf(100, 105);
         var i = 0;
 
-        GsubApplier.Apply(LookupOf(2), subtable, Font(), buffer, ref i).ShouldBeTrue();
+        Apply(subtable, buffer, ref i, 2).ShouldBeTrue();
 
         buffer.Length.ShouldBe(1);
         buffer.GlyphIds[0].ShouldBe(105u);
@@ -78,7 +87,7 @@ public class GsubMultipleAlternateTests
         var buffer = BufferOf(999); // not in coverage
         var i = 0;
 
-        GsubApplier.Apply(LookupOf(2), subtable, Font(), buffer, ref i).ShouldBeFalse();
+        Apply(subtable, buffer, ref i, 2).ShouldBeFalse();
         buffer.Length.ShouldBe(1);
         buffer.GlyphIds[0].ShouldBe(999u);
         i.ShouldBe(0);
@@ -92,7 +101,7 @@ public class GsubMultipleAlternateTests
         var buffer = BufferOf(100);
         var i = 0;
 
-        GsubApplier.Apply(LookupOf(3), subtable, Font(), buffer, ref i).ShouldBeTrue();
+        Apply(subtable, buffer, ref i, 3).ShouldBeTrue();
 
         buffer.Length.ShouldBe(1);
         buffer.GlyphIds[0].ShouldBe(300u);
@@ -106,7 +115,7 @@ public class GsubMultipleAlternateTests
         var buffer = BufferOf(50);
         var i = 0;
 
-        GsubApplier.Apply(LookupOf(3), subtable, Font(), buffer, ref i).ShouldBeFalse();
+        Apply(subtable, buffer, ref i, 3).ShouldBeFalse();
         buffer.GlyphIds[0].ShouldBe(50u);
     }
 

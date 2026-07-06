@@ -50,6 +50,12 @@ Directory.CreateDirectory(outDir);
     ("DejaVuSans.ttf", "q̣́", "latn", false),   // q + dot-below + acute (two mark-to-base, opposite sides)
     ("DejaVuSans.ttf", "q̣́", "latn", false),   // q + acute + dot-below (NON-canonical order → CCC reorder)
     ("DejaVuSans.ttf", "x̄́", "latn", false),   // x + macron + acute    (mark stacking → mark-to-mark)
+    // Contextual: after the ascender 'f', DejaVu chained-context-substitutes the combining
+    // mark to a raised variant glyph (GSUB 6 -> nested single subst). No composition (no
+    // precomposed "f"+accent), so HarfBuzz keeps base+mark and the variant shows up.
+    ("DejaVuSans.ttf", "f́", "latn", false),         // f + acute      (chained context)
+    ("DejaVuSans.ttf", "f̀", "latn", false),         // f + grave      (chained context)
+    ("DejaVuSans.ttf", "f̂", "latn", false),         // f + circumflex (chained context)
 ];
 
 var byFont = cases.GroupBy(c => c.Font, StringComparer.Ordinal);

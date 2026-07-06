@@ -10,12 +10,13 @@ namespace SharpAstro.Fonts.Shaping;
 /// <see cref="ShapeBuffer"/>'s codepoints to glyphs, runs the font's GSUB/GPOS lookups
 /// per the resolved <see cref="ShapePlan"/>, and finishes mark positioning.
 ///
-/// <para><b>H2 status:</b> GSUB type 1 (single), 2 (multiple), 3 (alternate), 4 (ligature)
-/// and GPOS type 1 (single), 2 (pair), 4 (mark-to-base), 5 (mark-to-ligature), 6
-/// (mark-to-mark) are applied — real ligatures, kerning, and diacritic positioning.
-/// Cursive (GPOS 3) and contextual/reverse (GSUB/GPOS 5/6/7/8) still no-op until later
-/// stages. There is no normalization pass: the engine assumes NFC input and reorders
-/// marks by canonical combining class, but never composes/decomposes.</para>
+/// <para><b>H3 status:</b> the full non-variable lookup set is applied — GSUB 1 (single),
+/// 2 (multiple), 3 (alternate), 4 (ligature), 5/6 (context/chained context), 8 (reverse
+/// chaining) and GPOS 1 (single), 2 (pair), 3 (cursive), 4/5/6 (mark attachment), 7/8
+/// (context/chained context). Contextual lookups invoke nested lookups at matched
+/// positions via <see cref="LookupRunner"/>. There is no normalization pass: the engine
+/// assumes NFC input and reorders marks by canonical combining class, but never
+/// composes/decomposes.</para>
 /// </summary>
 public static class Shaper
 {
@@ -46,9 +47,9 @@ public static class Shaper
         // attachment see glyphs in reading order regardless of direction.
         var plan = font.GetPlan(script, buffer.Direction);
         if (font.Gsub is not null)
-            ApplyLookups(font.Gsub, plan.SubstitutionLookups, font, buffer, isSubstitution: true);
+            new LookupRunner(font, font.Gsub, isSubstitution: true).Run(plan.SubstitutionLookups, buffer);
         if (font.Gpos is not null)
-            ApplyLookups(font.Gpos, plan.PositioningLookups, font, buffer, isSubstitution: false);
+            new LookupRunner(font, font.Gpos, isSubstitution: false).Run(plan.PositioningLookups, buffer);
 
         // Turn mark attachments into on-line offsets and zero mark advances (still logical order).
         GposApplier.Finish(font, buffer);
@@ -124,55 +125,4 @@ public static class Shaper
               UnicodeCategory.NonSpacingMark or
               UnicodeCategory.SpacingCombiningMark or
               UnicodeCategory.EnclosingMark;
-
-    /// <summary>
-    /// The spec's application model: each planned lookup runs over the whole run in
-    /// lookup-index order; within a lookup, glyphs it skips (mask miss or lookupFlag
-    /// class skip) are invisible; the first subtable that applies at a position wins
-    /// and the walk continues after the applied sequence.
-    /// </summary>
-    private static void ApplyLookups(LayoutTable table,
-        ShapePlan.PlannedLookup[] lookups, ShapingFont font, ShapeBuffer buffer,
-        bool isSubstitution)
-    {
-        foreach (var planned in lookups)
-        {
-            var lookup = table.Lookups[planned.LookupIndex];
-            if (lookup.Subtables.Length == 0) continue;
-
-            for (var i = 0; i < buffer.Length;)
-            {
-                if ((buffer.MasksMutable[i] & planned.Mask) == 0
-                    || lookup.Flags.SkipsGlyph(font.Gdef,
-                        buffer.GlyphsMutable[i], (GlyphClass)buffer.ClassesMutable[i],
-                        lookup.MarkFilteringSet))
-                {
-                    i++;
-                    continue;
-                }
-
-                var applied = false;
-                foreach (var subtable in lookup.Subtables)
-                {
-                    if (TryApplySubtable(lookup, subtable, font, buffer, ref i, isSubstitution))
-                    {
-                        applied = true;
-                        break;
-                    }
-                }
-                if (!applied) i++;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Dispatch one subtable at buffer position <paramref name="i"/>. Returns true when
-    /// it applied (having advanced <paramref name="i"/> past the applied output); false
-    /// leaves <paramref name="i"/> unchanged for the caller to step.
-    /// </summary>
-    private static bool TryApplySubtable(Lookup lookup, ReadOnlyMemory<byte> subtable,
-        ShapingFont font, ShapeBuffer buffer, ref int i, bool isSubstitution)
-        => isSubstitution
-            ? GsubApplier.Apply(lookup, subtable.Span, font, buffer, ref i)
-            : GposApplier.Apply(lookup, subtable.Span, font, buffer, ref i);
 }

@@ -10,3 +10,6 @@
 {"font":"DejaVuSans.ttf","text":"q\u0323\u0301","script":"latn","dir":"ltr","glyphs":[[84,0,1300,0,0,0],[724,0,0,0,-140,-429],[690,0,0,0,-165,0]]}
 {"font":"DejaVuSans.ttf","text":"q\u0301\u0323","script":"latn","dir":"ltr","glyphs":[[84,0,1300,0,0,0],[724,0,0,0,-140,-429],[690,0,0,0,-165,0]]}
 {"font":"DejaVuSans.ttf","text":"x\u0304\u0301","script":"latn","dir":"ltr","glyphs":[[91,0,1212,0,0,0],[693,0,0,0,-90,0],[690,0,0,0,-90,0]]}
+{"font":"DejaVuSans.ttf","text":"f\u0301","script":"latn","dir":"ltr","glyphs":[[73,0,721,0,0,0],[5923,0,0,0,271,373]]}
+{"font":"DejaVuSans.ttf","text":"f\u0300","script":"latn","dir":"ltr","glyphs":[[73,0,721,0,0,0],[5925,0,0,0,271,373]]}
+{"font":"DejaVuSans.ttf","text":"f\u0302","script":"latn","dir":"ltr","glyphs":[[73,0,721,0,0,0],[5926,0,0,0,271,373]]}
