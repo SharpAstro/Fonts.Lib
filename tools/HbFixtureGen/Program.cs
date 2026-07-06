@@ -56,6 +56,16 @@ Directory.CreateDirectory(outDir);
     ("DejaVuSans.ttf", "f́", "latn", false),         // f + acute      (chained context)
     ("DejaVuSans.ttf", "f̀", "latn", false),         // f + grave      (chained context)
     ("DejaVuSans.ttf", "f̂", "latn", false),         // f + circumflex (chained context)
+    // H4 Arabic joining: DejaVu's 'arab' script has init/medi/fina (isolated = the cmap base).
+    // The shaper picks each letter's positional form; HarfBuzz substitutes the same glyphs.
+    // Text is literal, logical order (beh U+0628, lam U+0644, alef U+0627, meem U+0645).
+    ("DejaVuSans.ttf", "بب", "arab", true),                 // beh+beh          → init, fina
+    ("DejaVuSans.ttf", "ببب", "arab", true),           // beh×3            → init, medi, fina
+    ("DejaVuSans.ttf", "لا", "arab", true),                 // lam+alef         → lam-alef (rlig/forms)
+    ("DejaVuSans.ttf", "سلام", "arab", true),     // seen-lam-alef-meem "salaam" → init, medi, fina, isol
+    // H4 Hebrew RTL (non-joining): pure reversal + cmap, no positional forms. Proves the RTL path.
+    ("DejaVuSans.ttf", "אב", "hebr", true),                 // alef+bet
+    ("DejaVuSans.ttf", "שלום", "hebr", true),     // shin-lamed-vav-finalmem "shalom"
 ];
 
 var byFont = cases.GroupBy(c => c.Font, StringComparer.Ordinal);

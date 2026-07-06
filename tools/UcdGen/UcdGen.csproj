@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>UcdGen</RootNamespace>
+    <!-- Dev-only, offline Unicode-table generator: reads the vendored UCD snapshot under
+         data/ucd/<version>/ and emits src/SharpAstro.Fonts.Shaping/Ucd/*.g.cs. It never
+         ships and the build never runs it (generated tables are checked in). Depends on
+         nothing — pure text-in, C#-out. Regenerate with `dotnet run` in this directory. -->
+  </PropertyGroup>
+
+</Project>

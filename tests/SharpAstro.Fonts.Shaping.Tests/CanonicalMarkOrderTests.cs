@@ -1,13 +1,14 @@
 using SharpAstro.Fonts.IO;
+using SharpAstro.Fonts.Shaping.Ucd;
 
 namespace SharpAstro.Fonts.Shaping.Tests;
 
 /// <summary>
-/// Canonical combining class table and the mark reordering it drives. The
-/// class-value assertions guard the hand-transcribed U+0300–U+036F block against typos
-/// (a wrong value would silently mis-order stacked marks); the end-to-end test proves a
-/// non-canonically-typed mark sequence comes out in canonical order — the same result the
-/// HarfBuzz conformance fixture checks, but stated here as intent.
+/// Canonical combining class table and the mark reordering it drives. The class-value
+/// assertions guard the generated UCD-wide table (see <c>tools/UcdGen</c>) against a bad
+/// regeneration (a wrong value would silently mis-order stacked marks); the end-to-end test
+/// proves a non-canonically-typed mark sequence comes out in canonical order — the same result
+/// the HarfBuzz conformance fixture checks, but stated here as intent.
 /// </summary>
 public class CanonicalMarkOrderTests
 {
@@ -23,7 +24,7 @@ public class CanonicalMarkOrderTests
     [InlineData(0x036F, 230)] // last codepoint in the block
     [InlineData(0x034F, 0)]   // combining grapheme joiner — a starter, blocks reordering
     [InlineData(0x0041, 0)]   // 'A' — a base letter, not a mark
-    [InlineData(0x0370, 0)]   // just past the block — unsupported, treated as a starter
+    [InlineData(0x0370, 0)]   // Greek capital heta — a base letter, CCC 0
     public void Ccc_MatchesUnicode(int codepoint, int expected)
         => CanonicalCombiningClass.Get((uint)codepoint).ShouldBe((byte)expected);
 
