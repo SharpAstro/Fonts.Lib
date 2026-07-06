@@ -32,6 +32,7 @@ internal static class Program
         EmitCombiningClass(dataDir, outDir);
         EmitJoining(dataDir, outDir);
         EmitMirroring(dataDir, outDir);
+        EmitScript(dataDir, outDir);
         return 0;
     }
 
@@ -101,6 +102,41 @@ internal static class Program
         WriteBlob(outDir, "BidiMirroring", file, "Pairs", bytes, pairs.Count, "mirror-pair");
     }
 
+    // ---- Scripts.txt + PropertyValueAliases.txt: codepoint → OpenType script tag.
+    // Scripts.txt gives long names over "start..end" ranges; PropertyValueAliases 'sc' lines map
+    // long → ISO 15924 short code, which lowercases to the OT script tag (arab, latn, hebr, …).
+    // The tag is stored as the engine Tag's big-endian packed uint. ISO⇒OT exceptions (e.g. Nkoo
+    // vs "nko ", Hira vs "kana") are not applied — they only affect scripts the engine doesn't
+    // specially shape, which fall back to DFLT.
+    private static void EmitScript(string dataDir, string outDir)
+    {
+        var longToShort = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var fields in ReadRecords(Path.Combine(dataDir, "PropertyValueAliases.txt")))
+            if (fields.Length >= 3 && fields[0] == "sc")
+                longToShort[fields[2]] = fields[1];
+
+        var file = Path.Combine(dataDir, "Scripts.txt");
+        var ranges = new List<(uint Start, uint End, uint Val)>();
+        foreach (var fields in ReadRecords(file))
+        {
+            var (start, end) = ParseRange(fields[0]);
+            if (!longToShort.TryGetValue(fields[1], out var shortCode))
+                throw new FormatException($"No 'sc' alias for script '{fields[1]}'");
+            ranges.Add((start, end, PackTag(shortCode)));
+        }
+        ranges.Sort((a, b) => a.Start.CompareTo(b.Start));
+        var coalesced = CoalesceRanges(ranges);
+
+        var bytes = new List<byte>(coalesced.Count * 10);
+        foreach (var (start, end, val) in coalesced)
+        {
+            WriteU24(bytes, start);
+            WriteU24(bytes, end);
+            WriteU32(bytes, val);
+        }
+        WriteBlob(outDir, "Script", file, "Ranges", bytes, coalesced.Count, "script-range");
+    }
+
     // ---- shared helpers ----
 
     /// <summary>Yield each non-empty, comment-stripped UCD line split on ';' with fields trimmed.</summary>
@@ -120,6 +156,33 @@ internal static class Program
     }
 
     private static uint ParseHex(string s) => uint.Parse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+
+    /// <summary>Parse a UCD codepoint field that is either "XXXX" or a "XXXX..YYYY" range.</summary>
+    private static (uint Start, uint End) ParseRange(string field)
+    {
+        var dots = field.IndexOf("..", StringComparison.Ordinal);
+        if (dots < 0)
+        {
+            var cp = ParseHex(field);
+            return (cp, cp);
+        }
+        return (ParseHex(field[..dots]), ParseHex(field[(dots + 2)..]));
+    }
+
+    /// <summary>Pack a 4-char ISO 15924 script code as the engine Tag's big-endian uint, lowercased
+    /// to the OpenType script tag (e.g. "Arab" → 0x61726162 = "arab").</summary>
+    private static uint PackTag(string isoCode)
+    {
+        if (isoCode.Length != 4)
+            throw new FormatException($"Script code '{isoCode}' is not 4 characters");
+        uint value = 0;
+        foreach (var c in isoCode)
+        {
+            var lower = c is >= 'A' and <= 'Z' ? (char)(c + 32) : c;
+            value = (value << 8) | (byte)lower;
+        }
+        return value;
+    }
 
     /// <summary>Sort entries by codepoint and merge runs of adjacent codepoints sharing a value
     /// into inclusive ranges.</summary>
@@ -163,6 +226,35 @@ internal static class Program
         bytes.Add((byte)value);
         bytes.Add((byte)(value >> 8));
         bytes.Add((byte)(value >> 16));
+    }
+
+    private static void WriteU32(List<byte> bytes, uint value)
+    {
+        bytes.Add((byte)value);
+        bytes.Add((byte)(value >> 8));
+        bytes.Add((byte)(value >> 16));
+        bytes.Add((byte)(value >> 24));
+    }
+
+    /// <summary>Merge pre-sorted ranges that share a value and touch or overlap (used for the
+    /// Script table, whose values are 32-bit tags rather than single bytes).</summary>
+    private static List<(uint Start, uint End, uint Val)> CoalesceRanges(List<(uint Start, uint End, uint Val)> ranges)
+    {
+        var result = new List<(uint Start, uint End, uint Val)>();
+        foreach (var r in ranges)
+        {
+            if (result.Count > 0)
+            {
+                var last = result[^1];
+                if (r.Val == last.Val && r.Start <= last.End + 1)
+                {
+                    result[^1] = (last.Start, Math.Max(last.End, r.End), last.Val);
+                    continue;
+                }
+            }
+            result.Add(r);
+        }
+        return result;
     }
 
     private static void WriteBlob(string outDir, string className, string sourceFile, string propName,

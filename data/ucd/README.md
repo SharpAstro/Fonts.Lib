@@ -15,9 +15,10 @@ like any code; the build never runs the generator.
 | `17.0.0/UnicodeData.txt` | Canonical_Combining_Class (field 3) | mark reordering (`CanonicalCombiningClass`) |
 | `17.0.0/ArabicShaping.txt` | Joining_Type (field 2) | Arabic joining (`Joining`) |
 | `17.0.0/BidiMirroring.txt` | Bidi_Mirroring_Glyph | RTL mirroring (`BidiMirroring`) |
+| `17.0.0/Scripts.txt` | Script | run itemization (`Script`) |
+| `17.0.0/PropertyValueAliases.txt` | `sc` long⇄short aliases | Script long-name → OT tag mapping |
 
-Later stages add `Scripts.txt` (H5 itemization) and `BidiBrackets.txt` / `Bidi_Class`
-(H6 UAX #9) to this snapshot.
+The H6 UAX #9 stage will add `BidiBrackets.txt` / `Bidi_Class` to this snapshot.
 
 ## Regenerate
 

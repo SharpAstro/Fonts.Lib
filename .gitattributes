@@ -1,0 +1,6 @@
+# Vendored UCD data and the tables generated from it are stored and checked out verbatim
+# with LF endings, regardless of core.autocrlf. This keeps the files byte-identical to the
+# upstream Unicode snapshot and makes tools/UcdGen deterministic — its provenance hashes are
+# taken over the source bytes, so a CRLF checkout would otherwise change them on every run.
+data/ucd/**/*.txt              text eol=lf
+src/SharpAstro.Fonts.Shaping/Ucd/*.g.cs text eol=lf
