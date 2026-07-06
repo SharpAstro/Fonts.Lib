@@ -29,8 +29,13 @@ var fontsDir = args[0];
 var outDir = args[1];
 Directory.CreateDirectory(outDir);
 
-// (font, text, script, rtl) — H1-era coverage: ligatures (fi/ffl), kerning (AV/Ta),
-// mixed words, and a mark-attachment case. Extend per stage.
+// (font, text, script, rtl) — H1 coverage: ligatures (fi/ffl), kerning (AV/Ta), mixed
+// words. H2 coverage: base+combining-mark sequences whose bases have NO precomposed form,
+// so HarfBuzz keeps them as base+mark and actually runs GPOS mark positioning. (A
+// precomposed pair like "a"+U+0301 gets composed to a single "á" glyph — see HbFixtures
+// remarks — and the no-normalization engine can't match that, so such cases are
+// deliberately avoided.) Bases: 'q' has no Latin precomposed forms at all; 'f'/'x' have
+// none for these marks. Marks are typed in canonical (CCC-ascending) order.
 (string Font, string Text, string Script, bool Rtl)[] cases =
 [
     ("DejaVuSans.ttf", "fi", "latn", false),
@@ -40,7 +45,11 @@ Directory.CreateDirectory(outDir);
     ("DejaVuSans.ttf", "Ta", "latn", false),
     ("DejaVuSans.ttf", "AVATAR", "latn", false),
     ("DejaVuSans.ttf", "office", "latn", false),
-    ("DejaVuSans.ttf", "áé", "latn", false), // combining acute marks
+    ("DejaVuSans.ttf", "q́", "latn", false),         // q + acute above       (mark-to-base)
+    ("DejaVuSans.ttf", "q̣", "latn", false),         // q + dot below         (mark-to-base, below anchor)
+    ("DejaVuSans.ttf", "q̣́", "latn", false),   // q + dot-below + acute (two mark-to-base, opposite sides)
+    ("DejaVuSans.ttf", "q̣́", "latn", false),   // q + acute + dot-below (NON-canonical order → CCC reorder)
+    ("DejaVuSans.ttf", "x̄́", "latn", false),   // x + macron + acute    (mark stacking → mark-to-mark)
 ];
 
 var byFont = cases.GroupBy(c => c.Font, StringComparer.Ordinal);
