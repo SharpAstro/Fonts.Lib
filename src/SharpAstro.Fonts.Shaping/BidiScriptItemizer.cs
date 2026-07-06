@@ -32,6 +32,16 @@ public static class BidiScriptItemizer
         if (text.IsEmpty)
             return (byte)(paragraphLevel == 1 ? 1 : 0);
 
+        // Latin fast path (mirrors ScriptItemizer): an LTR/auto paragraph whose text stays within
+        // Basic Latin .. Latin Extended-B (<= U+024F) has no RTL/AL/explicit characters, so it is a
+        // single Latin/LTR run at paragraph level 0 — skip the whole bidi resolution and its
+        // allocations. This keeps plain UI text as cheap through the bidi adapter as it was before.
+        if (paragraphLevel is 0 or BidiAlgorithm.AutoLevel && !text.ContainsAnyExceptInRange('\u0000', '\u024F'))
+        {
+            runs.Add(new ScriptRun(0, text.Length, DefaultScript, ShapeDirection.LeftToRight));
+            return 0;
+        }
+
         // Decode to codepoints and record each one's UTF-16 offset (so runs index the source line).
         var count = 0;
         foreach (var _ in text.EnumerateRunes()) count++;
