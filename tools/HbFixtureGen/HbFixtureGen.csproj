@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>HbFixtureGen</RootNamespace>
+    <!-- Dev-only golden-fixture generator: shapes text with REAL HarfBuzz (via the
+         HarfBuzzSharp binding) and dumps the results as .jsonl fixtures the engine
+         tests replay. This is the only place native HarfBuzz is allowed — it never
+         ships, and CI never runs it (fixtures are checked in). -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HarfBuzzSharp" />
+    <!-- Linux natives so fixtures can be (re)generated under WSL if the Windows
+         arm64 native asset is unavailable on the dev box. -->
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" />
+  </ItemGroup>
+
+</Project>

@@ -130,7 +130,31 @@ public sealed class OpenTypeFont
 
     private readonly CmapSubtable? _preferredCmap;
 
-    private OpenTypeFont(SfntDirectory directory,
+    /// <summary>The raw font file data this face was loaded from (whole file for a
+    /// TTC — <see cref="TableRecord.Offset"/> values are absolute file offsets).
+    /// Retained so satellites can read tables the core doesn't parse
+    /// (<see cref="TryGetTable"/>: GSUB/GDEF for the shaping engine, etc.).</summary>
+    private readonly ReadOnlyMemory<byte> _data;
+
+    /// <summary>
+    /// Raw bytes of an SFNT table by tag, e.g. <c>TryGetTable(new Tag("GSUB"), out var gsub)</c>.
+    /// This is the seam for satellite packages (text shaping) that parse tables outside the
+    /// core's scope — the returned memory aliases the font's own buffer (zero-copy, immutable).
+    /// Returns false for a missing table or a directory entry whose bounds exceed the data.
+    /// </summary>
+    public bool TryGetTable(Tag tag, out ReadOnlyMemory<byte> table)
+    {
+        if (Directory.TryGet(tag, out var rec)
+            && (long)rec.Offset + rec.Length <= _data.Length)
+        {
+            table = _data.Slice((int)rec.Offset, (int)rec.Length);
+            return true;
+        }
+        table = default;
+        return false;
+    }
+
+    private OpenTypeFont(ReadOnlyMemory<byte> data, SfntDirectory directory,
         HeadTable head, MaxpTable maxp, CmapTable? cmap,
         HheaTable? hhea, HmtxTable? hmtx, LocaTable? loca, GlyfTable? glyf,
         CffTable? cff, ColrTable? colr, CpalTable? cpal,
@@ -143,6 +167,7 @@ public sealed class OpenTypeFont
         VheaTable? vhea, VmtxTable? vmtx,
         Tables.OpenTypeMath.MathTable? math)
     {
+        _data = data;
         Directory = directory;
         Head = head;
         Maxp = maxp;
@@ -218,7 +243,7 @@ public sealed class OpenTypeFont
         }
         Avar?.Apply(norm);
 
-        return new OpenTypeFont(Directory, Head, Maxp, Cmap, Hhea, Hmtx, Loca, Glyf,
+        return new OpenTypeFont(_data, Directory, Head, Maxp, Cmap, Hhea, Hmtx, Loca, Glyf,
             Cff, Colr, Cpal, Cblc, Cbdt, Fvar, Avar, Gvar, Hvar, Mvar, Vvar, Cvar,
             Kern, Gpos, CvtFunits, Fpgm, Prep, norm, Vhea, Vmtx, Math);
     }
@@ -693,7 +718,7 @@ public sealed class OpenTypeFont
         if (dir.TryGet(Tags.Fpgm2, out var fpgmRec)) fpgm = fpgmRec.Slice(span).ToArray();
         if (dir.TryGet(Tags.Prep2, out var prepRec)) prep = prepRec.Slice(span).ToArray();
 
-        return new OpenTypeFont(dir, head, maxp, cmap, hhea, hmtx, loca, glyf,
+        return new OpenTypeFont(data, dir, head, maxp, cmap, hhea, hmtx, loca, glyf,
             cff, colr, cpal, cblc, cbdt, fvar, avar, gvar, hvar, mvar, vvar, cvar,
             kern, gpos, cvtFunits, fpgm, prep, normCoords, vhea, vmtx, math);
     }
