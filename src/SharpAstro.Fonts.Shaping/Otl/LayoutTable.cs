@@ -16,6 +16,17 @@ internal sealed class Lookup
     /// <summary>GDEF MarkGlyphSets index; only meaningful when <see cref="LookupFlags.UseMarkFilteringSet"/> is set.</summary>
     public required ushort MarkFilteringSet { get; init; }
     public required ReadOnlyMemory<byte>[] Subtables { get; init; }
+
+    /// <summary>
+    /// A digest of the glyphs this lookup can act on at the position where it is invoked — the
+    /// union of every subtable's entry coverage (the coverage the applier probes against the
+    /// current glyph before doing anything). Built once per font at parse time. The runner uses
+    /// it to skip a glyph whose id can't be in any subtable's coverage, avoiding the coverage
+    /// binary search and GDEF class lookup for the many non-matching positions. Conservatively
+    /// saturated (matches everything) when a subtable's coverage can't be located, so the skip is
+    /// always safe. See <see cref="SetDigest"/>.
+    /// </summary>
+    public required SetDigest Digest { get; init; }
 }
 
 /// <summary>
@@ -112,9 +123,14 @@ internal sealed class LayoutTable
         // Version 1.1 adds featureVariationsOffset (variable-font feature swaps) — not consumed.
         _ = minor;
 
+        // GSUB's Extension type is 7, GPOS's is 9; that also distinguishes the tables, which the
+        // digest builder needs because the context/chained types (5/6 in GSUB, 7/8 in GPOS) locate
+        // their entry coverage differently than the offset-2 types they otherwise share.
+        var isSubstitution = extensionLookupType == 7;
+
         var scripts = ParseScriptList(data, scriptListOffset);
         var features = ParseFeatureList(data, featureListOffset);
-        var lookups = ParseLookupList(table, lookupListOffset, extensionLookupType, maxLookupType);
+        var lookups = ParseLookupList(table, lookupListOffset, extensionLookupType, maxLookupType, isSubstitution);
         if (scripts is null || features is null || lookups is null) return null;
 
         return new LayoutTable(scripts, features, lookups);
@@ -204,7 +220,7 @@ internal sealed class LayoutTable
     }
 
     private static Lookup[]? ParseLookupList(ReadOnlyMemory<byte> table, int lookupListOffset,
-        ushort extensionLookupType, ushort maxLookupType)
+        ushort extensionLookupType, ushort maxLookupType, bool isSubstitution)
     {
         var data = table.Span;
         if (lookupListOffset <= 0 || lookupListOffset + 2 > data.Length) return null;
@@ -219,7 +235,7 @@ internal sealed class LayoutTable
         for (var i = 0; i < lookupCount; i++)
         {
             lookups[i] = ParseLookup(table, lookupListOffset + lookupOffsets[i],
-                extensionLookupType, maxLookupType);
+                extensionLookupType, maxLookupType, isSubstitution);
         }
         return lookups;
     }
@@ -230,10 +246,11 @@ internal sealed class LayoutTable
         Flags = LookupFlags.None,
         MarkFilteringSet = 0,
         Subtables = [],
+        Digest = default, // no subtables → never consulted (the runner skips empty lookups)
     };
 
     private static Lookup ParseLookup(ReadOnlyMemory<byte> table, int lookupBase,
-        ushort extensionLookupType, ushort maxLookupType)
+        ushort extensionLookupType, ushort maxLookupType, bool isSubstitution)
     {
         var data = table.Span;
         if (lookupBase + 6 > data.Length) return EmptyLookup;
@@ -288,12 +305,73 @@ internal sealed class LayoutTable
         if (type == extensionLookupType && resolvedType == extensionLookupType)
             resolvedType = 0;
 
+        var subtableArr = subtables.ToArray();
         return new Lookup
         {
             Type = resolvedType,
             Flags = flags,
             MarkFilteringSet = markFilteringSet,
-            Subtables = subtables.ToArray(),
+            Subtables = subtableArr,
+            Digest = BuildDigest(resolvedType, isSubstitution, subtableArr),
         };
     }
+
+    /// <summary>
+    /// Build the <see cref="Lookup.Digest"/>: the union of each subtable's entry coverage (the
+    /// coverage the applier probes against the current glyph before it does anything). If any
+    /// subtable's coverage can't be located or enumerated, the digest is saturated to match every
+    /// glyph — the lookup is then never wrongly skipped, it just forgoes the optimization.
+    /// </summary>
+    private static SetDigest BuildDigest(ushort type, bool isSubstitution, ReadOnlyMemory<byte>[] subtables)
+    {
+        var digest = default(SetDigest);
+        foreach (var subtable in subtables)
+        {
+            var span = subtable.Span;
+            var coverageOffset = EntryCoverageOffset(type, isSubstitution, span);
+            if (coverageOffset < 0 || !Coverage.AddToDigest(span, coverageOffset, ref digest))
+            {
+                digest.SaturateAll();
+                return digest;
+            }
+        }
+        return digest;
+    }
+
+    /// <summary>
+    /// The offset, within <paramref name="subtable"/>, of the coverage table that gates whether the
+    /// applier acts at the current glyph — the "entry" coverage. For every GSUB type (1/2/3/4, and 8
+    /// reverse-chaining) and every GPOS type (1/2/3, and the mark types 4/5/6 whose entry is the
+    /// <em>mark</em> coverage) that coverage sits at offset 2. Only the contextual types differ:
+    /// context (GSUB 5 / GPOS 7) and chained context (GSUB 6 / GPOS 8) formats 1 and 2 also use
+    /// offset 2, but format 3 inlines its coverage array — the entry is the first input coverage.
+    /// Returns −1 when the subtable is too short to classify (caller saturates the digest).
+    /// </summary>
+    private static int EntryCoverageOffset(ushort type, bool isSubstitution, ReadOnlySpan<byte> subtable)
+    {
+        if (subtable.Length < 2) return -1;
+        var isContext = isSubstitution ? type == 5 : type == 7;
+        var isChained = isSubstitution ? type == 6 : type == 8;
+        if (!isContext && !isChained)
+            return subtable.Length >= 4 ? ReadU16Span(subtable, 2) : -1;
+
+        var format = ReadU16Span(subtable, 0);
+        if (format is 1 or 2)
+            return subtable.Length >= 4 ? ReadU16Span(subtable, 2) : -1;
+        if (format != 3) return -1;
+
+        if (isContext)
+            // SequenceContextFormat3: format(2), glyphCount(2), seqLookupCount(2), coverageOffsets[].
+            return subtable.Length >= 8 ? ReadU16Span(subtable, 6) : -1;
+
+        // ChainedSequenceContextFormat3: format(2), backtrackGlyphCount(2), backtrackCoverage[],
+        // inputGlyphCount(2), inputCoverage[]… — the entry is inputCoverage[0].
+        if (subtable.Length < 4) return -1;
+        var backtrackCount = ReadU16Span(subtable, 2);
+        var inputCovPos = 6 + backtrackCount * 2; // skip backtrack coverages + inputGlyphCount
+        return inputCovPos + 2 <= subtable.Length ? ReadU16Span(subtable, inputCovPos) : -1;
+    }
+
+    private static ushort ReadU16Span(ReadOnlySpan<byte> b, int offset)
+        => (ushort)((b[offset] << 8) | b[offset + 1]);
 }

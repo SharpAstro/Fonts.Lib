@@ -46,9 +46,18 @@ internal sealed class LookupRunner
                 continue;
             }
 
+            // Hoist the (immutable) per-lookup digest into a local — one struct copy per lookup, not
+            // per position. The digest check reads the live glyph, so it stays correct as GSUB
+            // substitutions rewrite the buffer under the loop.
+            var digest = lookup.Digest;
             for (var i = 0; i < buffer.Length;)
             {
-                if ((buffer.MasksMutable[i] & p.Mask) == 0 || Skips(lookup, buffer, i))
+                // Digest before Skips: a cheap 3-word membership test that rejects most positions
+                // (their glyph isn't in any subtable's coverage), skipping the GDEF class lookup in
+                // Skips and the coverage binary search in ApplyLookup for those.
+                if ((buffer.MasksMutable[i] & p.Mask) == 0
+                    || !digest.MayContain(buffer.GlyphsMutable[i])
+                    || Skips(lookup, buffer, i))
                 {
                     i++;
                     continue;
@@ -62,9 +71,12 @@ internal sealed class LookupRunner
     // (1→1, no length change), so the index steps down whether or not a match occurred.
     private void RunReverse(Lookup lookup, ushort mask, ShapeBuffer buffer)
     {
+        var digest = lookup.Digest;
         for (var i = buffer.Length - 1; i >= 0; i--)
         {
-            if ((buffer.MasksMutable[i] & mask) == 0 || Skips(lookup, buffer, i)) continue;
+            if ((buffer.MasksMutable[i] & mask) == 0
+                || !digest.MayContain(buffer.GlyphsMutable[i])
+                || Skips(lookup, buffer, i)) continue;
             foreach (var subtable in lookup.Subtables)
                 if (GsubApplier.ApplyReverseChain(this, lookup, subtable.Span, buffer, i)) break;
         }

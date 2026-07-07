@@ -37,6 +37,7 @@ public class GsubMultipleAlternateTests
         Flags = LookupFlags.None,
         MarkFilteringSet = 0,
         Subtables = [], // Apply() takes the subtable span directly; this array is unused here
+        Digest = default, // digest is only consulted by the runner's walk, not by a direct Apply()
     };
 
     // Drive the applier through a runner (its GSUB table is only used for runner.Font here;
