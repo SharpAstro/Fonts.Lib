@@ -17,6 +17,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="SharpAstro.Fonts.Shaping.Tests" />
+    <!-- ScriptLookupBenchmarks measures the internal page-index tables (Script.Ranges/PageIndex,
+         UcdTables.RangeU32*) head-to-head against the binary search. -->
+    <InternalsVisibleTo Include="SharpAstro.Fonts.Benchmarks" />
   </ItemGroup>
 
   <ItemGroup>

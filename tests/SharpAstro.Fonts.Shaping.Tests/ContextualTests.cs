@@ -118,7 +118,7 @@ public class ContextualTests
         var subtable = BuildCursive(
             (gidA, EntryX: null, EntryY: null, ExitX: exitX, ExitY: exitY),   // cur uses its exit
             (gidB, EntryX: entryX, EntryY: entryY, ExitX: null, ExitY: null)); // next uses its entry
-        var lookup = new Lookup { Type = 3, Flags = LookupFlags.None, MarkFilteringSet = 0, Subtables = [] };
+        var lookup = new Lookup { Type = 3, Flags = LookupFlags.None, MarkFilteringSet = 0, Subtables = [], Digest = default };
 
         var buffer = new ShapeBuffer();
         buffer.AddText("..");

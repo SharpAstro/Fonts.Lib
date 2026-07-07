@@ -115,6 +115,41 @@ internal sealed class Coverage
     public static bool Covers(ReadOnlySpan<byte> table, int offset, uint glyphId)
         => IndexOf(table, offset, glyphId) >= 0;
 
+    /// <summary>
+    /// Add every glyph covered by the table at <paramref name="offset"/> to <paramref name="digest"/>
+    /// (format 1 as individual glyphs, format 2 by range). Returns false — without touching the
+    /// digest — when the table is malformed or an unrecognized format, so a caller building a
+    /// lookup digest can conservatively saturate it (never skip that lookup). Zero-allocation.
+    /// </summary>
+    public static bool AddToDigest(ReadOnlySpan<byte> table, int offset, ref SetDigest digest)
+    {
+        if (offset <= 0 || offset + 4 > table.Length) return false;
+        var format = ReadU16(table, offset);
+        if (format == 1)
+        {
+            var count = ReadU16(table, offset + 2);
+            var arr = offset + 4;
+            if (arr + count * 2 > table.Length) return false;
+            for (var i = 0; i < count; i++) digest.Add(ReadU16(table, arr + i * 2));
+            return true;
+        }
+        if (format == 2)
+        {
+            var rangeCount = ReadU16(table, offset + 2);
+            var arr = offset + 4;
+            if (arr + rangeCount * 6 > table.Length) return false;
+            for (var i = 0; i < rangeCount; i++)
+            {
+                var rec = arr + i * 6;                 // range: start(2), end(2), startCoverageIndex(2)
+                var start = ReadU16(table, rec);
+                var end = ReadU16(table, rec + 2);
+                if (end >= start) digest.AddRange(start, end);
+            }
+            return true;
+        }
+        return false;
+    }
+
     private static ushort ReadU16(ReadOnlySpan<byte> b, int offset)
         => (ushort)((b[offset] << 8) | b[offset + 1]);
 

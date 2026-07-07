@@ -25,6 +25,52 @@ public static class BidiAlgorithm
     /// <summary>Auto paragraph level (resolve via P2/P3 — first strong character).</summary>
     public const int AutoLevel = -1;
 
+    // Per-thread reusable working buffers. Resolve needs several O(n) arrays per call and a text-heavy
+    // caller reflows line by line, so pool them per thread (grown to the largest paragraph seen; the
+    // live length is passed explicitly to each phase since the arrays may be oversized). The two
+    // directional stacks are stackalloc'd instead. Net: zero steady-state allocation.
+    private sealed class Scratch
+    {
+        public BidiClass[] Types = [];
+        public BidiClass[] Original = [];
+        public byte[] Levels = [];
+        public int[] MatchingPDI = [];   // BD9: initiator -> matching PDI (or n)
+        public int[] PdiStack = [];      // BD9 matching stack
+        public int[] RunMembers = [];    // non-X9-removed indices grouped by level run
+        public int[] RunStart = [];      // run r spans RunMembers[RunStart[r] .. RunStart[r]+RunLen[r])
+        public int[] RunLen = [];
+        public bool[] RunUsed = [];
+        // Isolating run sequences partition the non-removed characters, so all their indices pack into
+        // one buffer; sequence s occupies SeqAll[SeqStart[s] .. SeqStart[s]+SeqLen[s]) with sos/eos.
+        public int[] SeqAll = [];
+        public int[] SeqStart = [];
+        public int[] SeqLen = [];
+        public BidiClass[] SeqSos = [];
+        public BidiClass[] SeqEos = [];
+
+        public void EnsureCapacity(int n)
+        {
+            if (Types.Length >= n) return;
+            var cap = Math.Max(n, 64);
+            Types = new BidiClass[cap];
+            Original = new BidiClass[cap];
+            Levels = new byte[cap];
+            MatchingPDI = new int[cap];
+            PdiStack = new int[cap];
+            RunMembers = new int[cap];
+            RunStart = new int[cap];
+            RunLen = new int[cap];
+            RunUsed = new bool[cap];
+            SeqAll = new int[cap];
+            SeqStart = new int[cap];
+            SeqLen = new int[cap];
+            SeqSos = new BidiClass[cap];
+            SeqEos = new BidiClass[cap];
+        }
+    }
+
+    [ThreadStatic] private static Scratch? _scratch;
+
     /// <summary>
     /// Resolve the embedding level of every codepoint in <paramref name="codepoints"/> (one
     /// paragraph). <paramref name="paragraphLevel"/> is 0 (LTR), 1 (RTL), or <see cref="AutoLevel"/>
@@ -41,8 +87,11 @@ public static class BidiAlgorithm
         if (n == 0)
             return (byte)(paragraphLevel == 1 ? 1 : 0);
 
-        var types = new BidiClass[n];
-        var original = new BidiClass[n];
+        var sc = _scratch ??= new Scratch();
+        sc.EnsureCapacity(n);
+        var types = sc.Types;
+        var original = sc.Original;
+        var levelArr = sc.Levels;
         for (var i = 0; i < n; i++)
         {
             var t = Bidi.Get(codepoints[i]);
@@ -51,15 +100,15 @@ public static class BidiAlgorithm
         }
 
         // BD9: for each isolate initiator, the index of its matching PDI (or n if none).
-        var matchingPDI = ComputeMatchingPDI(types);
+        var matchingPDI = sc.MatchingPDI;
+        ComputeMatchingPDI(types, n, matchingPDI, sc.PdiStack);
 
         var paraLevel = paragraphLevel is 0 or 1
             ? (byte)paragraphLevel
             : ComputeParagraphLevel(types, matchingPDI, 0, n);
 
         // X1–X8: explicit levels + override resolution, using the directional status stack.
-        var levelArr = new byte[n];
-        ResolveExplicit(types, matchingPDI, paraLevel, levelArr);
+        ResolveExplicit(types, matchingPDI, paraLevel, levelArr, n);
 
         // X9: remove explicit formatting characters (treat as BN for the rest of the algorithm).
         for (var i = 0; i < n; i++)
@@ -67,15 +116,10 @@ public static class BidiAlgorithm
                 types[i] = BidiClass.BN;
 
         // X10: process each isolating run sequence (W, N, I rules run per sequence).
-        foreach (var seq in BuildIsolatingRunSequences(types, original, levelArr, paraLevel, matchingPDI))
-        {
-            ResolveWeakTypes(seq, types);
-            ResolveNeutralTypes(seq, types, codepoints, levelArr);
-            ResolveImplicitLevels(seq, types, levelArr);
-        }
+        ProcessIsolatingRunSequences(sc, types, original, levelArr, codepoints, paraLevel, matchingPDI, n);
 
         // L1: reset separators and trailing whitespace/isolates to the paragraph level.
-        ApplyL1(original, levelArr, paraLevel);
+        ApplyL1(original, levelArr, paraLevel, n);
 
         // UAX #9 §5.2 (retaining format characters): give each X9-removed character the level of the
         // preceding character, so L2 treats it as part of the adjacent run (it is omitted from
@@ -149,36 +193,34 @@ public static class BidiAlgorithm
 
     // ---- BD9: match isolate initiators to PDIs -----------------------------------------
 
-    private static int[] ComputeMatchingPDI(BidiClass[] types)
+    private static void ComputeMatchingPDI(BidiClass[] types, int n, int[] matching, int[] stack)
     {
-        var n = types.Length;
-        var matching = new int[n];
-        var stack = new Stack<int>();
+        for (var i = 0; i < n; i++) matching[i] = n; // default: not an initiator / no matching PDI
+        var sp = 0;
         for (var i = 0; i < n; i++)
         {
             switch (types[i])
             {
                 case BidiClass.LRI or BidiClass.RLI or BidiClass.FSI:
-                    matching[i] = n; // default: no matching PDI
-                    stack.Push(i);
+                    stack[sp++] = i;
                     break;
-                case BidiClass.PDI when stack.Count > 0:
-                    matching[stack.Pop()] = i;
+                case BidiClass.PDI when sp > 0:
+                    matching[stack[--sp]] = i;
                     break;
             }
         }
-        return matching;
     }
 
     // ---- X1–X8: explicit levels & directions -------------------------------------------
 
     private readonly record struct StatusEntry(byte Level, BidiClass Override, bool Isolate);
 
-    private static void ResolveExplicit(BidiClass[] types, int[] matchingPDI, byte paraLevel, byte[] levels)
+    private static void ResolveExplicit(BidiClass[] types, int[] matchingPDI, byte paraLevel, byte[] levels, int n)
     {
-        var n = types.Length;
-        var stack = new Stack<StatusEntry>();
-        stack.Push(new StatusEntry(paraLevel, BidiClass.ON, false)); // ON = neutral override status
+        // Directional status stack: at most MaxDepth+2 entries (UAX #9 X-rules), so stackalloc, no heap.
+        Span<StatusEntry> stack = stackalloc StatusEntry[MaxDepth + 2];
+        var sp = 0;
+        stack[sp++] = new StatusEntry(paraLevel, BidiClass.ON, false); // ON = neutral override status
 
         var overflowIsolate = 0;
         var overflowEmbedding = 0;
@@ -191,13 +233,13 @@ public static class BidiAlgorithm
             {
                 case BidiClass.RLE or BidiClass.LRE or BidiClass.RLO or BidiClass.LRO:
                 {
-                    levels[i] = stack.Peek().Level; // X9 char; keep current level for now
+                    levels[i] = stack[sp - 1].Level; // X9 char; keep current level for now
                     var isRtl = t is BidiClass.RLE or BidiClass.RLO;
-                    var newLevel = NextLevel(stack.Peek().Level, isRtl);
+                    var newLevel = NextLevel(stack[sp - 1].Level, isRtl);
                     if (newLevel <= MaxDepth && overflowIsolate == 0 && overflowEmbedding == 0)
                     {
                         var ov = t == BidiClass.LRO ? BidiClass.L : t == BidiClass.RLO ? BidiClass.R : BidiClass.ON;
-                        stack.Push(new StatusEntry((byte)newLevel, ov, false));
+                        stack[sp++] = new StatusEntry((byte)newLevel, ov, false);
                     }
                     else if (overflowIsolate == 0)
                     {
@@ -207,7 +249,7 @@ public static class BidiAlgorithm
                 }
                 case BidiClass.RLI or BidiClass.LRI or BidiClass.FSI:
                 {
-                    var cur = stack.Peek();
+                    var cur = stack[sp - 1];
                     levels[i] = cur.Level;
                     if (cur.Override != BidiClass.ON) types[i] = cur.Override;
 
@@ -217,7 +259,7 @@ public static class BidiAlgorithm
                     if (newLevel <= MaxDepth && overflowIsolate == 0 && overflowEmbedding == 0)
                     {
                         validIsolate++;
-                        stack.Push(new StatusEntry((byte)newLevel, BidiClass.ON, true));
+                        stack[sp++] = new StatusEntry((byte)newLevel, BidiClass.ON, true);
                     }
                     else
                     {
@@ -234,21 +276,21 @@ public static class BidiAlgorithm
                     else if (validIsolate > 0)
                     {
                         overflowEmbedding = 0;
-                        while (!stack.Peek().Isolate) stack.Pop();
-                        stack.Pop();
+                        while (!stack[sp - 1].Isolate) sp--;
+                        sp--;
                         validIsolate--;
                     }
-                    var cur = stack.Peek();
+                    var cur = stack[sp - 1];
                     levels[i] = cur.Level;
                     if (cur.Override != BidiClass.ON) types[i] = cur.Override;
                     break;
                 }
                 case BidiClass.PDF:
                 {
-                    levels[i] = stack.Peek().Level;
+                    levels[i] = stack[sp - 1].Level;
                     if (overflowIsolate > 0) { /* nothing */ }
                     else if (overflowEmbedding > 0) overflowEmbedding--;
-                    else if (!stack.Peek().Isolate && stack.Count >= 2) stack.Pop();
+                    else if (!stack[sp - 1].Isolate && sp >= 2) sp--;
                     break;
                 }
                 case BidiClass.B:
@@ -259,12 +301,12 @@ public static class BidiAlgorithm
                 }
                 case BidiClass.BN:
                 {
-                    levels[i] = stack.Peek().Level;
+                    levels[i] = stack[sp - 1].Level;
                     break;
                 }
                 default:
                 {
-                    var cur = stack.Peek();
+                    var cur = stack[sp - 1];
                     levels[i] = cur.Level;
                     if (cur.Override != BidiClass.ON) types[i] = cur.Override;
                     break;
@@ -282,81 +324,115 @@ public static class BidiAlgorithm
 
     // ---- X10: isolating run sequences --------------------------------------------------
 
-    /// <summary>An isolating run sequence: the ordered character indices plus the start-of-sequence
-    /// and end-of-sequence directional types (sos/eos) that bound its weak/neutral resolution.</summary>
-    private sealed class RunSequence
+    /// <summary>
+    /// Build the isolating run sequences (X10 / BD13) and run the per-sequence W, N and I rules on
+    /// each in turn. Level runs (maximal equal-level runs over the non-X9-removed characters) are
+    /// flattened into the scratch <c>RunMembers</c> buffer and chained through isolate initiators to
+    /// their matching PDI's run; each sequence's indices are gathered into the scratch <c>SeqBuf</c>
+    /// and resolved in place. No per-sequence heap allocation (was List&lt;List&lt;int&gt;&gt; +
+    /// Dictionary + a RunSequence object and index array per sequence).
+    /// </summary>
+    private static void ProcessIsolatingRunSequences(Scratch sc, BidiClass[] types, BidiClass[] original,
+        byte[] levels, ReadOnlySpan<uint> codepoints, byte paraLevel, int[] matchingPDI, int n)
     {
-        public required int[] Indices;
-        public BidiClass Sos;
-        public BidiClass Eos;
-    }
-
-    private static List<RunSequence> BuildIsolatingRunSequences(
-        BidiClass[] types, BidiClass[] original, byte[] levels, byte paraLevel, int[] matchingPDI)
-    {
-        var n = types.Length;
-
-        // Level runs: maximal runs of equal level, skipping X9-removed characters entirely.
-        var runs = new List<List<int>>();
-        List<int>? current = null;
+        // Level runs: RunMembers holds the non-X9-removed indices in order, grouped by run; run r
+        // occupies RunMembers[RunStart[r] .. RunStart[r]+RunLen[r]).
+        var members = sc.RunMembers;
+        var runStart = sc.RunStart;
+        var runLen = sc.RunLen;
+        var runCount = 0;
+        var m = 0;
         var currentLevel = -1;
         for (var i = 0; i < n; i++)
         {
             if (IsRemovedByX9(original[i])) continue;
-            if (current is null || levels[i] != currentLevel)
+            if (runCount == 0 || levels[i] != currentLevel)
             {
-                current = [];
-                runs.Add(current);
+                if (runCount > 0) runLen[runCount - 1] = m - runStart[runCount - 1];
+                runStart[runCount++] = m;
                 currentLevel = levels[i];
             }
-            current.Add(i);
+            members[m++] = i;
         }
+        if (runCount > 0) runLen[runCount - 1] = m - runStart[runCount - 1];
 
-        // Chain level runs into isolating run sequences: a run ending in an isolate initiator whose
-        // matching PDI opens another run continues into that run (BD13).
-        var sequences = new List<RunSequence>();
-        var used = new bool[runs.Count];
+        var used = sc.RunUsed;
+        for (var r = 0; r < runCount; r++) used[r] = false;
 
-        // Map: first index of a run -> run number, to find the run a PDI starts.
-        var runStartingAt = new Dictionary<int, int>();
-        for (var r = 0; r < runs.Count; r++)
-            runStartingAt[runs[r][0]] = r;
-
-        for (var r = 0; r < runs.Count; r++)
+        // Phase 1: build every isolating run sequence (chaining runs through isolate initiators, BD13)
+        // and capture its sos/eos NOW — while `levels` still holds embedding levels. ResolveImplicit
+        // in phase 2 mutates `levels`, so every sos/eos must be taken before any sequence is processed
+        // (a boundary scan for one sequence reads a neighbour's otherwise-mutated level).
+        var seqAll = sc.SeqAll;
+        var seqStart = sc.SeqStart;
+        var seqLen = sc.SeqLen;
+        var seqSos = sc.SeqSos;
+        var seqEos = sc.SeqEos;
+        var seqCount = 0;
+        var allLen = 0;
+        for (var r = 0; r < runCount; r++)
         {
             if (used[r]) continue;
-            // A sequence starts at a run whose first char is not a PDI matching an isolate initiator.
-            var firstIdx = runs[r][0];
-            if (original[firstIdx] == BidiClass.PDI && HasMatchingInitiator(matchingPDI, firstIdx))
+            // A sequence starts at a run whose first char is not a PDI matching an isolate initiator (BD13).
+            var firstIdx = members[runStart[r]];
+            if (original[firstIdx] == BidiClass.PDI && HasMatchingInitiator(matchingPDI, n, firstIdx))
                 continue;
 
-            var seqIndices = new List<int>();
+            var start = allLen;
             var cur = r;
             while (true)
             {
                 used[cur] = true;
-                seqIndices.AddRange(runs[cur]);
-                var last = runs[cur][^1];
+                var rs = runStart[cur];
+                var rl = runLen[cur];
+                for (var k = 0; k < rl; k++) seqAll[allLen++] = members[rs + k];
+                var last = members[rs + rl - 1];
                 if (original[last] is BidiClass.LRI or BidiClass.RLI or BidiClass.FSI
-                    && matchingPDI[last] < n
-                    && runStartingAt.TryGetValue(matchingPDI[last], out var nextRun))
+                    && matchingPDI[last] < n)
                 {
-                    cur = nextRun;
-                    continue;
+                    var nextRun = FindRunStartingAt(members, runStart, runCount, matchingPDI[last]);
+                    if (nextRun >= 0) { cur = nextRun; continue; }
                 }
                 break;
             }
 
-            var seq = new RunSequence { Indices = [.. seqIndices] };
-            ComputeSosEos(seq, types, levels, paraLevel, n);
-            sequences.Add(seq);
+            seqStart[seqCount] = start;
+            seqLen[seqCount] = allLen - start;
+            var (sos, eos) = ComputeSosEos(seqAll.AsSpan(start, allLen - start), types, levels, paraLevel, n);
+            seqSos[seqCount] = sos;
+            seqEos[seqCount] = eos;
+            seqCount++;
         }
-        return sequences;
+
+        // Phase 2: resolve weak (W1-W7), neutral (N0-N2) and implicit (I1-I2) types per sequence.
+        for (var s = 0; s < seqCount; s++)
+        {
+            var idx = seqAll.AsSpan(seqStart[s], seqLen[s]);
+            ResolveWeakTypes(idx, seqSos[s], types);
+            ResolveNeutralTypes(idx, seqSos[s], seqEos[s], types, codepoints, levels);
+            ResolveImplicitLevels(idx, types, levels);
+        }
     }
 
-    private static bool HasMatchingInitiator(int[] matchingPDI, int pdiIndex)
+    // Which level run begins at original index `firstIndex`; -1 if none. Runs are in ascending order
+    // of their first index, so binary search (replaces the old first-index -> run-number dictionary).
+    private static int FindRunStartingAt(int[] members, int[] runStart, int runCount, int firstIndex)
     {
-        for (var i = 0; i < matchingPDI.Length; i++)
+        int lo = 0, hi = runCount - 1;
+        while (lo <= hi)
+        {
+            var mid = (lo + hi) >>> 1;
+            var f = members[runStart[mid]];
+            if (firstIndex < f) hi = mid - 1;
+            else if (firstIndex > f) lo = mid + 1;
+            else return mid;
+        }
+        return -1;
+    }
+
+    private static bool HasMatchingInitiator(int[] matchingPDI, int n, int pdiIndex)
+    {
+        for (var i = 0; i < n; i++)
             if (matchingPDI[i] == pdiIndex)
                 return true;
         return false;
@@ -364,10 +440,11 @@ public static class BidiAlgorithm
 
     // sos/eos (X10): compare the sequence's boundary level with the adjacent character's level
     // (or the paragraph level at the text edges); the higher level's parity gives L or R.
-    private static void ComputeSosEos(RunSequence seq, BidiClass[] types, byte[] levels, byte paraLevel, int n)
+    private static (BidiClass Sos, BidiClass Eos) ComputeSosEos(
+        ReadOnlySpan<int> idx, BidiClass[] types, byte[] levels, byte paraLevel, int n)
     {
-        var first = seq.Indices[0];
-        var last = seq.Indices[^1];
+        var first = idx[0];
+        var last = idx[^1];
         var seqLevel = levels[first];
 
         var prevLevel = paraLevel;
@@ -377,7 +454,7 @@ public static class BidiAlgorithm
             prevLevel = levels[i];
             break;
         }
-        seq.Sos = ((Math.Max(seqLevel, prevLevel) & 1) != 0) ? BidiClass.R : BidiClass.L;
+        var sos = ((Math.Max(seqLevel, prevLevel) & 1) != 0) ? BidiClass.R : BidiClass.L;
 
         // eos: if the sequence ends with an isolate initiator that has no matching PDI, use the
         // paragraph level; otherwise the following character's level.
@@ -392,21 +469,21 @@ public static class BidiAlgorithm
                 break;
             }
         }
-        seq.Eos = ((Math.Max(endLevel, nextLevel) & 1) != 0) ? BidiClass.R : BidiClass.L;
+        var eos = ((Math.Max(endLevel, nextLevel) & 1) != 0) ? BidiClass.R : BidiClass.L;
+        return (sos, eos);
     }
 
     private static bool IsRemovedByX9Level(BidiClass[] types, int i) => types[i] == BidiClass.BN;
 
     // ---- W1–W7 -------------------------------------------------------------------------
 
-    private static void ResolveWeakTypes(RunSequence seq, BidiClass[] types)
+    private static void ResolveWeakTypes(ReadOnlySpan<int> idx, BidiClass sos, BidiClass[] types)
     {
-        var idx = seq.Indices;
         var count = idx.Length;
 
         // W1: NSM → type of previous character in the sequence (sos at the start); isolate
         // initiators and PDI count as ON for this purpose.
-        var prev = seq.Sos;
+        var prev = sos;
         for (var k = 0; k < count; k++)
         {
             var t = types[idx[k]];
@@ -419,7 +496,7 @@ public static class BidiAlgorithm
         }
 
         // W2: EN → AN if the last strong type seen is AL.
-        var lastStrong = seq.Sos;
+        var lastStrong = sos;
         for (var k = 0; k < count; k++)
         {
             var t = types[idx[k]];
@@ -463,7 +540,7 @@ public static class BidiAlgorithm
                 types[idx[k]] = BidiClass.ON;
 
         // W7: EN → L if the last strong type is L.
-        lastStrong = seq.Sos;
+        lastStrong = sos;
         for (var k = 0; k < count; k++)
         {
             var t = types[idx[k]];
@@ -474,11 +551,11 @@ public static class BidiAlgorithm
 
     // ---- N0: paired brackets -----------------------------------------------------------
 
-    private static void ResolveNeutralTypes(RunSequence seq, BidiClass[] types, ReadOnlySpan<uint> codepoints, byte[] levels)
+    private static void ResolveNeutralTypes(ReadOnlySpan<int> idx, BidiClass sos, BidiClass eos,
+        BidiClass[] types, ReadOnlySpan<uint> codepoints, byte[] levels)
     {
-        ResolveBrackets(seq, types, codepoints, levels);
+        ResolveBrackets(idx, sos, types, codepoints, levels);
 
-        var idx = seq.Indices;
         var count = idx.Length;
         var embeddingDir = (levels[idx[0]] & 1) != 0 ? BidiClass.R : BidiClass.L;
 
@@ -492,17 +569,20 @@ public static class BidiAlgorithm
             while (k < count && IsNeutralOrIsolate(types[idx[k]])) k++;
             var end = k; // exclusive
 
-            var before = start > 0 ? StrongDir(types[idx[start - 1]]) : seq.Sos;
-            var after = end < count ? StrongDir(types[idx[end]]) : seq.Eos;
+            var before = start > 0 ? StrongDir(types[idx[start - 1]]) : sos;
+            var after = end < count ? StrongDir(types[idx[end]]) : eos;
             var resolved = before == after ? before : embeddingDir;
             for (var j = start; j < end; j++) types[idx[j]] = resolved;
         }
     }
 
+    // A matched bracket pair: opening and closing positions within the sequence's index list.
+    private readonly record struct BracketPair(int Open, int Close);
+
     // BD16 + N0: match paired brackets on a stack (max 63 open) and resolve each pair's direction.
-    private static void ResolveBrackets(RunSequence seq, BidiClass[] types, ReadOnlySpan<uint> codepoints, byte[] levels)
+    private static void ResolveBrackets(ReadOnlySpan<int> idx, BidiClass sos,
+        BidiClass[] types, ReadOnlySpan<uint> codepoints, byte[] levels)
     {
-        var idx = seq.Indices;
         var count = idx.Length;
         var embeddingDir = (levels[idx[0]] & 1) != 0 ? BidiClass.R : BidiClass.L;
 
@@ -510,7 +590,8 @@ public static class BidiAlgorithm
         Span<int> openStackPos = stackalloc int[63];
         Span<uint> openStackPaired = stackalloc uint[63];
         var sp = 0;
-        var pairs = new List<(int Open, int Close)>();
+        Span<BracketPair> pairs = stackalloc BracketPair[63];
+        var pairCount = 0;
         for (var k = 0; k < count; k++)
         {
             if (types[idx[k]] != BidiClass.ON) continue; // only characters resolved to ON are brackets
@@ -528,16 +609,16 @@ public static class BidiAlgorithm
                 {
                     if (CanonicalMatch(openStackPaired[s], codepoints[idx[k]]))
                     {
-                        pairs.Add((openStackPos[s], k));
+                        pairs[pairCount++] = new BracketPair(openStackPos[s], k);
                         sp = s; // pop this and everything above
                         break;
                     }
                 }
             }
         }
-        pairs.Sort((a, b) => a.Open.CompareTo(b.Open));
+        pairs[..pairCount].Sort(static (a, b) => a.Open.CompareTo(b.Open));
 
-        foreach (var (open, close) in pairs)
+        foreach (var (open, close) in pairs[..pairCount])
         {
             // N0: does a strong type matching the embedding direction appear between the brackets?
             var foundEmbedding = false;
@@ -557,7 +638,7 @@ public static class BidiAlgorithm
             {
                 // (c): opposite direction inside — use it if the context before establishes it,
                 // else the embedding direction.
-                var priorDir = seq.Sos;
+                var priorDir = sos;
                 for (var k = open - 1; k >= 0; k--)
                 {
                     var d = StrongDir(types[idx[k]]);
@@ -602,9 +683,9 @@ public static class BidiAlgorithm
 
     // ---- I1–I2: implicit levels --------------------------------------------------------
 
-    private static void ResolveImplicitLevels(RunSequence seq, BidiClass[] types, byte[] levels)
+    private static void ResolveImplicitLevels(ReadOnlySpan<int> idx, BidiClass[] types, byte[] levels)
     {
-        foreach (var i in seq.Indices)
+        foreach (var i in idx)
         {
             var level = levels[i];
             var t = types[i];
@@ -629,9 +710,8 @@ public static class BidiAlgorithm
     // Reset to the paragraph level: (1) segment separators, (2) paragraph separators, (3) any
     // sequence of whitespace / isolate formatting preceding a separator, and (4) any such trailing
     // sequence at the end of the line. Uses ORIGINAL types (L1 is defined on them).
-    private static void ApplyL1(BidiClass[] original, byte[] levels, byte paraLevel)
+    private static void ApplyL1(BidiClass[] original, byte[] levels, byte paraLevel, int n)
     {
-        var n = original.Length;
         var resetFrom = n; // start of the current trailing whitespace/isolate run
         for (var i = 0; i < n; i++)
         {

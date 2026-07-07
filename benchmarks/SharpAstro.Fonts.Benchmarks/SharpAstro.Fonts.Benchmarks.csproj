@@ -5,7 +5,9 @@
     <RootNamespace>SharpAstro.Fonts.Benchmarks</RootNamespace>
     <IsPackable>false</IsPackable>
     <!-- BenchmarkDotNet requires Release for meaningful numbers. -->
-    <NoWarn>$(NoWarn);CA1707;CA1812</NoWarn>
+    <!-- CA1822: benchmark methods that only touch static tables (e.g. ScriptLookupBenchmarks) are
+         still instance methods by BDN convention; don't force `static`. -->
+    <NoWarn>$(NoWarn);CA1707;CA1812;CA1822</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SharpAstro.Fonts\SharpAstro.Fonts.csproj" />
+    <ProjectReference Include="..\..\src\SharpAstro.Fonts.Shaping\SharpAstro.Fonts.Shaping.csproj" />
   </ItemGroup>
 
   <!-- Reuse the test fixture fonts (linked, not copied). -->

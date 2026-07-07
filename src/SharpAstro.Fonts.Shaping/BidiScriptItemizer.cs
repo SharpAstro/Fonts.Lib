@@ -42,11 +42,15 @@ public static class BidiScriptItemizer
             return 0;
         }
 
-        // Decode to codepoints and record each one's UTF-16 offset (so runs index the source line).
+        // Decode to codepoints and record each one's UTF-16 offset (so runs index the source line),
+        // into per-thread scratch — the whole non-fast path is now zero-allocation.
         var count = 0;
         foreach (var _ in text.EnumerateRunes()) count++;
-        var cps = new uint[count];
-        var offsets = new int[count + 1];
+
+        var sc = _scratch ??= new Scratch();
+        sc.EnsureCapacity(count);
+        var cps = sc.Cps;
+        var offsets = sc.Offsets;
         var ci = 0;
         var off = 0;
         foreach (var rune in text.EnumerateRunes())
@@ -58,12 +62,17 @@ public static class BidiScriptItemizer
         }
         offsets[count] = text.Length;
 
-        var levels = new byte[count];
-        var paraLevel = BidiAlgorithm.Resolve(cps, paragraphLevel, levels);
+        var levels = sc.Levels;
+        var paraLevel = BidiAlgorithm.Resolve(cps.AsSpan(0, count), paragraphLevel, levels.AsSpan(0, count));
 
-        // Build (level, script) runs in LOGICAL order. A run breaks at a level change or a real
-        // script change; Common/Inherited attach to the open run (or fold forward when leading).
-        var logical = new List<LogicalRun>();
+        // Build (level, script) runs in LOGICAL order into parallel scratch arrays. A run breaks at a
+        // level change or a real script change; Common/Inherited attach to the open run (or fold
+        // forward when leading).
+        var rStart = sc.RunStartCp;
+        var rEnd = sc.RunEndCp;
+        var rLevel = sc.RunLevel;
+        var rScript = sc.RunScript;
+        var logicalCount = 0;
         var runStart = 0;
         var runLevel = levels[0];
         var runScript = Script.Get(cps[0]);
@@ -76,7 +85,8 @@ public static class BidiScriptItemizer
 
             if (lvl != runLevel)
             {
-                logical.Add(new LogicalRun(runStart, i, runLevel, haveRealScript ? runScript : DefaultScript));
+                rStart[logicalCount] = runStart; rEnd[logicalCount] = i; rLevel[logicalCount] = runLevel;
+                rScript[logicalCount++] = haveRealScript ? runScript : DefaultScript;
                 runStart = i;
                 runLevel = lvl;
                 runScript = s;
@@ -89,31 +99,60 @@ public static class BidiScriptItemizer
             }
             else if (!neutral && s != runScript)
             {
-                logical.Add(new LogicalRun(runStart, i, runLevel, runScript));
+                rStart[logicalCount] = runStart; rEnd[logicalCount] = i; rLevel[logicalCount] = runLevel;
+                rScript[logicalCount++] = runScript;
                 runStart = i;
                 runScript = s;
                 haveRealScript = true;
             }
         }
-        logical.Add(new LogicalRun(runStart, count, runLevel, haveRealScript ? runScript : DefaultScript));
+        rStart[logicalCount] = runStart; rEnd[logicalCount] = count; rLevel[logicalCount] = runLevel;
+        rScript[logicalCount++] = haveRealScript ? runScript : DefaultScript;
 
-        // L2: reorder the runs by embedding level (each run is one unit). Reuse the reordering on a
-        // per-run level array so contiguous higher-level run groups reverse together.
-        var runLevels = new byte[logical.Count];
-        for (var r = 0; r < logical.Count; r++) runLevels[r] = logical[r].Level;
-        var visual = new int[logical.Count];
-        BidiAlgorithm.Reorder(runLevels, visual);
+        // L2: reorder the runs by embedding level (each run is one unit); the per-run level array is
+        // rLevel itself, so contiguous higher-level run groups reverse together.
+        var visual = sc.Visual;
+        BidiAlgorithm.Reorder(rLevel.AsSpan(0, logicalCount), visual.AsSpan(0, logicalCount));
 
-        foreach (var r in visual)
+        for (var v = 0; v < logicalCount; v++)
         {
-            var lr = logical[r];
-            var start = offsets[lr.StartCp];
-            var length = offsets[lr.EndCp] - start;
-            var direction = (lr.Level & 1) != 0 ? ShapeDirection.RightToLeft : ShapeDirection.LeftToRight;
-            runs.Add(new ScriptRun(start, length, lr.Script, direction));
+            var r = visual[v];
+            var start = offsets[rStart[r]];
+            var length = offsets[rEnd[r]] - start;
+            var direction = (rLevel[r] & 1) != 0 ? ShapeDirection.RightToLeft : ShapeDirection.LeftToRight;
+            runs.Add(new ScriptRun(start, length, rScript[r], direction));
         }
         return paraLevel;
     }
 
-    private readonly record struct LogicalRun(int StartCp, int EndCp, byte Level, Tag Script);
+    // Per-thread reusable buffers for the non-fast path (mirrors BidiAlgorithm's scratch): codepoints,
+    // UTF-16 offsets, levels, the logical (level, script) runs as parallel arrays, and the L2 visual
+    // order. Grown to the largest paragraph seen; there are at most `count` logical runs.
+    private sealed class Scratch
+    {
+        public uint[] Cps = [];
+        public int[] Offsets = [];
+        public byte[] Levels = [];
+        public int[] RunStartCp = [];
+        public int[] RunEndCp = [];
+        public byte[] RunLevel = [];
+        public Tag[] RunScript = [];
+        public int[] Visual = [];
+
+        public void EnsureCapacity(int count)
+        {
+            if (Cps.Length >= count) return;
+            var cap = Math.Max(count, 64);
+            Cps = new uint[cap];
+            Offsets = new int[cap + 1];
+            Levels = new byte[cap];
+            RunStartCp = new int[cap];
+            RunEndCp = new int[cap];
+            RunLevel = new byte[cap];
+            RunScript = new Tag[cap];
+            Visual = new int[cap];
+        }
+    }
+
+    [ThreadStatic] private static Scratch? _scratch;
 }
