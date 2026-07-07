@@ -43,7 +43,7 @@ internal static class SequenceContext
         var ruleSetCount = ReadU16(subtable, 4);
         if (covIdx >= ruleSetCount) return false;
         return TryRuleSet(runner, lookup, subtable, ReadU16(subtable, 6 + covIdx * 2),
-            buffer, ref i, depth, inputClasses: null);
+            buffer, ref i, depth, inputClassOffset: -1);
     }
 
     private static bool ContextFormat2(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> subtable,
@@ -51,12 +51,13 @@ internal static class SequenceContext
     {
         if (subtable.Length < 8) return false;
         if (!Coverage.Covers(subtable, ReadU16(subtable, 2), buffer.GlyphsMutable[i])) return false;
-        var classDef = ClassDef.Parse(subtable, ReadU16(subtable, 4));
-        var cls = classDef.GetClass(buffer.GlyphsMutable[i]);
+        // Span-direct class lookup — no materialized ClassDef/array per apply (see ClassDef.ClassOf).
+        var classDefOffset = ReadU16(subtable, 4);
+        var cls = ClassDef.ClassOf(subtable, classDefOffset, buffer.GlyphsMutable[i]);
         var ruleSetCount = ReadU16(subtable, 6);
         if (cls >= ruleSetCount) return false;
         return TryRuleSet(runner, lookup, subtable, ReadU16(subtable, 8 + cls * 2),
-            buffer, ref i, depth, inputClasses: classDef);
+            buffer, ref i, depth, inputClassOffset: classDefOffset);
     }
 
     private static bool ContextFormat3(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> subtable,
@@ -100,7 +101,7 @@ internal static class SequenceContext
         var ruleSetCount = ReadU16(subtable, 4);
         if (covIdx >= ruleSetCount) return false;
         return TryChainedRuleSet(runner, lookup, subtable, ReadU16(subtable, 6 + covIdx * 2),
-            buffer, ref i, depth, null, null, null);
+            buffer, ref i, depth, -1, -1, -1);
     }
 
     private static bool ChainedFormat2(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> subtable,
@@ -108,14 +109,15 @@ internal static class SequenceContext
     {
         if (subtable.Length < 12) return false;
         if (!Coverage.Covers(subtable, ReadU16(subtable, 2), buffer.GlyphsMutable[i])) return false;
-        var backtrackClasses = ClassDef.Parse(subtable, ReadU16(subtable, 4));
-        var inputClasses = ClassDef.Parse(subtable, ReadU16(subtable, 6));
-        var lookaheadClasses = ClassDef.Parse(subtable, ReadU16(subtable, 8));
-        var cls = inputClasses.GetClass(buffer.GlyphsMutable[i]);
+        // Span-direct class offsets — no materialized ClassDef arrays per apply (see ClassDef.ClassOf).
+        var backtrackClassOffset = ReadU16(subtable, 4);
+        var inputClassOffset = ReadU16(subtable, 6);
+        var lookaheadClassOffset = ReadU16(subtable, 8);
+        var cls = ClassDef.ClassOf(subtable, inputClassOffset, buffer.GlyphsMutable[i]);
         var ruleSetCount = ReadU16(subtable, 10);
         if (cls >= ruleSetCount) return false;
         return TryChainedRuleSet(runner, lookup, subtable, ReadU16(subtable, 12 + cls * 2),
-            buffer, ref i, depth, backtrackClasses, inputClasses, lookaheadClasses);
+            buffer, ref i, depth, backtrackClassOffset, inputClassOffset, lookaheadClassOffset);
     }
 
     private static bool ChainedFormat3(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> subtable,
@@ -161,7 +163,7 @@ internal static class SequenceContext
     // ---- rule-set iteration (formats 1/2) ---------------------------------------------
 
     private static bool TryRuleSet(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> subtable,
-        int ruleSetOffset, ShapeBuffer buffer, ref int i, int depth, ClassDef? inputClasses)
+        int ruleSetOffset, ShapeBuffer buffer, ref int i, int depth, int inputClassOffset)
     {
         if (ruleSetOffset == 0 || ruleSetOffset + 2 > subtable.Length) return false;
         var ruleSet = subtable[ruleSetOffset..];
@@ -171,7 +173,7 @@ internal static class SequenceContext
             if (2 + r * 2 + 2 > ruleSet.Length) break;
             var ruleOffset = ReadU16(ruleSet, 2 + r * 2);
             if (ruleOffset == 0 || ruleSetOffset + ruleOffset >= subtable.Length) continue;
-            if (TryContextRule(runner, lookup, subtable[(ruleSetOffset + ruleOffset)..], buffer, ref i, depth, inputClasses))
+            if (TryContextRule(runner, lookup, subtable, subtable[(ruleSetOffset + ruleOffset)..], buffer, ref i, depth, inputClassOffset))
                 return true;
         }
         return false;
@@ -179,8 +181,8 @@ internal static class SequenceContext
 
     // SequenceRule / ClassSequenceRule: glyphCount(2), seqLookupCount(2),
     // inputSequence[glyphCount-1] (2 each), seqLookupRecords[seqLookupCount] (4 each).
-    private static bool TryContextRule(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> rule,
-        ShapeBuffer buffer, ref int i, int depth, ClassDef? inputClasses)
+    private static bool TryContextRule(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> subtable,
+        ReadOnlySpan<byte> rule, ShapeBuffer buffer, ref int i, int depth, int inputClassOffset)
     {
         if (rule.Length < 4) return false;
         var glyphCount = ReadU16(rule, 0);
@@ -196,7 +198,7 @@ internal static class SequenceContext
         for (var k = 1; k < glyphCount; k++)
         {
             var expected = ReadU16(rule, inputValsPos + (k - 1) * 2);
-            if (!MatchValue(inputClasses, buffer.GlyphsMutable[inputPos[k]], expected)) return false;
+            if (!MatchValue(subtable, inputClassOffset, buffer.GlyphsMutable[inputPos[k]], expected)) return false;
         }
 
         var delta = ApplyLookupRecords(runner, rule[recordsPos..], recordCount, inputPos[..glyphCount], buffer, depth);
@@ -206,7 +208,7 @@ internal static class SequenceContext
 
     private static bool TryChainedRuleSet(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> subtable,
         int ruleSetOffset, ShapeBuffer buffer, ref int i, int depth,
-        ClassDef? backtrackClasses, ClassDef? inputClasses, ClassDef? lookaheadClasses)
+        int backtrackClassOffset, int inputClassOffset, int lookaheadClassOffset)
     {
         if (ruleSetOffset == 0 || ruleSetOffset + 2 > subtable.Length) return false;
         var ruleSet = subtable[ruleSetOffset..];
@@ -216,8 +218,8 @@ internal static class SequenceContext
             if (2 + r * 2 + 2 > ruleSet.Length) break;
             var ruleOffset = ReadU16(ruleSet, 2 + r * 2);
             if (ruleOffset == 0 || ruleSetOffset + ruleOffset >= subtable.Length) continue;
-            if (TryChainedRule(runner, lookup, subtable[(ruleSetOffset + ruleOffset)..],
-                    buffer, ref i, depth, backtrackClasses, inputClasses, lookaheadClasses))
+            if (TryChainedRule(runner, lookup, subtable, subtable[(ruleSetOffset + ruleOffset)..],
+                    buffer, ref i, depth, backtrackClassOffset, inputClassOffset, lookaheadClassOffset))
                 return true;
         }
         return false;
@@ -226,9 +228,9 @@ internal static class SequenceContext
     // ChainedSequenceRule / ChainedClassSequenceRule: backtrackCount(2), backtrack[] (2 each),
     // inputCount(2), input[inputCount-1] (2 each), lookaheadCount(2), lookahead[] (2 each),
     // seqLookupCount(2), records[] (4 each). Backtrack is stored nearest-first.
-    private static bool TryChainedRule(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> rule,
-        ShapeBuffer buffer, ref int i, int depth,
-        ClassDef? backtrackClasses, ClassDef? inputClasses, ClassDef? lookaheadClasses)
+    private static bool TryChainedRule(LookupRunner runner, Lookup lookup, ReadOnlySpan<byte> subtable,
+        ReadOnlySpan<byte> rule, ShapeBuffer buffer, ref int i, int depth,
+        int backtrackClassOffset, int inputClassOffset, int lookaheadClassOffset)
     {
         var font = runner.Font;
         var pos = 0;
@@ -249,19 +251,19 @@ internal static class SequenceContext
         inputPos[0] = i;
         if (!CollectForward(font, lookup, buffer, i, inputCount - 1, inputPos[1..])) return false;
         for (var k = 1; k < inputCount; k++)
-            if (!MatchValue(inputClasses, buffer.GlyphsMutable[inputPos[k]], ReadU16(rule, inputValsPos + (k - 1) * 2)))
+            if (!MatchValue(subtable, inputClassOffset, buffer.GlyphsMutable[inputPos[k]], ReadU16(rule, inputValsPos + (k - 1) * 2)))
                 return false;
 
         Span<int> backPos = stackalloc int[MaxSeq];
         if (!CollectBackward(font, lookup, buffer, i, backtrackCount, backPos)) return false;
         for (var k = 0; k < backtrackCount; k++)
-            if (!MatchValue(backtrackClasses, buffer.GlyphsMutable[backPos[k]], ReadU16(rule, backtrackValsPos + k * 2)))
+            if (!MatchValue(subtable, backtrackClassOffset, buffer.GlyphsMutable[backPos[k]], ReadU16(rule, backtrackValsPos + k * 2)))
                 return false;
 
         Span<int> aheadPos = stackalloc int[MaxSeq];
         if (!CollectForward(font, lookup, buffer, inputPos[inputCount - 1], lookaheadCount, aheadPos)) return false;
         for (var k = 0; k < lookaheadCount; k++)
-            if (!MatchValue(lookaheadClasses, buffer.GlyphsMutable[aheadPos[k]], ReadU16(rule, lookaheadValsPos + k * 2)))
+            if (!MatchValue(subtable, lookaheadClassOffset, buffer.GlyphsMutable[aheadPos[k]], ReadU16(rule, lookaheadValsPos + k * 2)))
                 return false;
 
         var delta = ApplyLookupRecords(runner, rule[recordsPos..], recordCount, inputPos[..inputCount], buffer, depth);
@@ -319,10 +321,11 @@ internal static class SequenceContext
         return true;
     }
 
-    /// <summary>Compare a buffer glyph against a rule value: by glyph id (fmt 1, <paramref name="classes"/>
-    /// null) or by class (fmt 2).</summary>
-    private static bool MatchValue(ClassDef? classes, uint glyph, ushort expected)
-        => classes is null ? glyph == expected : classes.GetClass(glyph) == expected;
+    /// <summary>Compare a buffer glyph against a rule value: by glyph id (fmt 1,
+    /// <paramref name="classOffset"/> &lt; 0) or by class (fmt 2, via the zero-alloc
+    /// <see cref="ClassDef.ClassOf"/> at that subtable-relative offset).</summary>
+    private static bool MatchValue(ReadOnlySpan<byte> subtable, int classOffset, uint glyph, ushort expected)
+        => classOffset < 0 ? glyph == expected : ClassDef.ClassOf(subtable, classOffset, glyph) == expected;
 
     /// <summary>
     /// Apply the subtable's seqLookupRecords: each (sequenceIndex, lookupListIndex) runs the
