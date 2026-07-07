@@ -63,15 +63,69 @@ Known approximations vs FreeType:
   is hinted. Feeding hinted outlines into `RenderSdf` is an open experiment
   (uncertain payoff — SDF undersamples tiny stems regardless).
 
+## Shaping (`SharpAstro.Fonts.Shaping`)
+
+The separate pure-managed shaping engine — a distinct NuGet package layered
+over `SharpAstro.Fonts`. This is the "separate library" the HarfBuzz note
+below anticipated; it now exists, so that note no longer means shaping is
+absent. What the engine does, and where it deliberately stops:
+
+**Implemented:** the OpenType layout core — GSUB types 1–8, GPOS types 1–9,
+GDEF (glyph classes + mark-filtering sets), context / chained-context /
+reverse-chaining / extension lookups; ligatures, kerning, and mark-to-base /
+-ligature / -mark; canonical mark reordering by combining class; Arabic
+joining (`init`/`medi`/`fina`/`isol`); and the full UAX #9 bidirectional
+algorithm with bidi-aware script itemization. Scripts that need no glyph
+reordering shape correctly today: Latin, Greek, Cyrillic, CJK, Arabic,
+Hebrew.
+
+The limitations below live here (rather than scattered across the `.csproj`
+description and XML-doc comments where they used to) so "what's left" is
+answerable from the repo.
+
+### Complex-script shapers — out of scope
+No Indic, USE (Universal Shaping Engine), Khmer, Myanmar, Tibetan, or
+Thai/Lao shaper. These need syllable segmentation plus base / reph / matra
+glyph **reordering**; without it they fall through to `DefaultShaper` (which
+runs GSUB/GPOS but reorders nothing) and will misrender. Matches the
+package's own scope line ("Indic/USE out of scope") in
+`SharpAstro.Fonts.Shaping.csproj`.
+
+### No Unicode normalizer
+The engine assumes **NFC input**: it reorders combining marks by canonical
+combining class but never composes or decomposes (`ShaperBase.cs`,
+`Shaper.cs`). There is no cmap-driven composition fallback (the equivalent of
+HarfBuzz's shape-normalize pass), so decomposed input or fonts that only
+cover composed forms can miss glyphs.
+
+### Canonical-combining-class table is partial
+`CanonicalCombiningClass` is only the Latin/Greek block, hand-transcribed;
+codepoints outside it are treated as starters (CCC 0) and never reorder.
+Non-Latin mark stacks need the full generated UCD table.
+
+### GPOS variation deltas deferred
+`ValueRecord` does not apply Device / VariationIndex (Item Variation Store)
+deltas, so GPOS positioning on a **variable font at a non-default axis
+position** uses default-instance values (`ValueRecord.cs` — "deferred IVT
+path (plan non-goal)").
+
+### No line-break / width / vertical UCD data
+UAX #14 (line breaking), UAX #11 (East-Asian width), and UAX #50 (vertical
+orientation) tables are not generated. These are layout-adjacent — a
+line-layout engine's concern rather than the shaper's — but they are the
+prerequisite for CJK / Thai line layout and vertical text.
+
 ## Out of scope
 
 These are NOT planned for SharpAstro.Fonts and would warrant a
 separate library if needed.
 
-- **HarfBuzz-equivalent shaping** — GSUB lookup-types beyond
-  pair-kerning, complex script shaping (Arabic, Indic, Thai, Hebrew),
-  bidi reordering, line breaking, layout. SharpAstro.Fonts matches
-  FreeType's scope; HarfBuzz is a separate concern.
+- **Shaping inside `SharpAstro.Fonts` itself** — the base library stays
+  FreeType-scope (glyph loading, rasterization, hinting) and does no text
+  shaping. OpenType shaping lives in the separate `SharpAstro.Fonts.Shaping`
+  package (see the Shaping section above, which now covers the OT-layout
+  core, Arabic joining, and UAX #9 bidi). A full HarfBuzz-equivalent —
+  complex-script (Indic/USE/Thai) shaping — remains out of scope even there.
 - **Auto-hinter** — only if the v40 interpreter proves insufficient.
 - **BDF, PCF, PFR, Windows FNT/FON** — legacy formats with no use case.
 - **gxvalid / otvalid** validators — tools, not runtime.
