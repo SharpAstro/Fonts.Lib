@@ -61,6 +61,26 @@ public class Type1Tests
         bmp.Alpha.Any(a => a > 0 && a < 255).ShouldBeTrue();
     }
 
+    [Theory]
+    [InlineData("ff")]
+    [InlineData("fi")]
+    [InlineData("fl")]
+    [InlineData("ffi")]
+    [InlineData("ffl")]
+    public void Cmr10_RenderLigature_ProducesAaBitmap(string name)
+    {
+        // The f-ligatures sit at OT1 codes 11-15 in LaTeX PDFs. When Type1 rendering was broken the
+        // whole doc fell back to a Latin font that has no glyphs there, so they rendered blank
+        // ("Definition" -> "De nition"). Assert each ligature carries real anti-aliased ink.
+        var font = Type1Font.LoadPfbFromFile(Fixtures.Path(CmrFile));
+        font.HasGlyph(name).ShouldBeTrue($"cmr10 should contain the '{name}' ligature");
+        var bmp = font.RenderGlyph(name, 64f);
+        bmp.IsEmpty.ShouldBeFalse();
+        bmp.Alpha.Max().ShouldBe((byte)255);
+        bmp.Alpha.Min().ShouldBe((byte)0);
+        bmp.Alpha.Any(a => a > 0 && a < 255).ShouldBeTrue();
+    }
+
     [Fact]
     public void Cmr10_DumpAaBmps()
     {
