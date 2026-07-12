@@ -300,6 +300,15 @@ public sealed class OpenTypeFont
     /// </summary>
     public uint GetGlyphId(uint codepoint, uint charCode, GlyphMapHint hint)
     {
+        // CID-keyed CFF (CIDFontType0): a charCode-as-index request IS a CID, and the
+        // authoritative CID→GID map is the CFF charset — exact even when a subsetter
+        // renumbered glyphs, and correct regardless of whether a (stripped) cmap survived.
+        // Identity charsets collapse to charCode==GID, so this stays right for the common case.
+        if (Cff is { IsCidKeyed: true } cidCff
+            && hint is GlyphMapHint.CharCodeIsGID or GlyphMapHint.EmbeddedSubset
+            && charCode > 0)
+            return ValidGid(cidCff.CidToGid(charCode));
+
         if (Cmap is not null)
             // GetGlyphIdHinted already gates its synthetic direct-GID fallbacks on
             // numGlyphs, but its cmap-subtable returns are unchecked — re-gate here
@@ -577,6 +586,17 @@ public sealed class OpenTypeFont
     public static OpenTypeFont Load(ReadOnlyMemory<byte> data, int faceIndex = 0)
     {
         var span = data.Span;
+        // Bare CFF program (CIDFontType0 /FontFile3 in a PDF): no SFNT wrapper, so the
+        // buffer opens with the CFF header — major version 1 in byte 0. No SFNT signature
+        // (0x00010000 / 'OTTO' / 'true' / 'typ1' / 'ttcf') begins with 0x01, so this is
+        // an unambiguous discriminator.
+        if (span.Length >= 4 && span[0] == 0x01)
+        {
+            if (faceIndex != 0)
+                throw new ArgumentOutOfRangeException(nameof(faceIndex),
+                    $"Bare CFF has only one face (index 0); requested index {faceIndex}.");
+            return LoadBareCff(data);
+        }
         // TTC: dispatch to the right face's offset table. The face's tables are
         // referenced by offsets *from the start of the file* (not relative to
         // its own offset table) — same as standalone SFNT — so the existing
@@ -594,6 +614,30 @@ public sealed class OpenTypeFont
             throw new ArgumentOutOfRangeException(nameof(faceIndex),
                 $"Plain SFNT has only one face (index 0); requested index {faceIndex}.");
         return LoadAtOffset(data, 0);
+    }
+
+    /// <summary>
+    /// Build a face from a bare CFF program (no SFNT wrapper). Everything the core
+    /// needs comes from the CFF itself: glyph count = CharStrings INDEX count,
+    /// units-per-em + bbox = FontMatrix / FontBBox, outlines = Type-2 charstrings.
+    /// There is no cmap (CID fonts select glyphs by CID→GID through the charset — see
+    /// <see cref="GetGlyphId(uint,uint,GlyphMapHint)"/>) and no hmtx (advance comes from
+    /// the charstring width; a PDF consumer positions glyphs from the content stream, not
+    /// the embedded metrics, so a null Hmtx is harmless for that path).
+    /// </summary>
+    private static OpenTypeFont LoadBareCff(ReadOnlyMemory<byte> data)
+    {
+        var cff = CffTable.Parse(data); // expectedNumGlyphs = -1 → derive from CharStrings
+        var bb = cff.FontBBox;
+        var head = HeadTable.ForCff(cff.UnitsPerEm, bb[0], bb[1], bb[2], bb[3]);
+        var maxp = MaxpTable.ForCff((ushort)cff.NumGlyphs);
+        var dir = SfntDirectory.Empty(0x4F54544F); // 'OTTO' — CFF-flavored
+        return new OpenTypeFont(data, dir, head, maxp,
+            cmap: null, hhea: null, hmtx: null, loca: null, glyf: null,
+            cff: cff, colr: null, cpal: null, cblc: null, cbdt: null,
+            fvar: null, avar: null, gvar: null, hvar: null, mvar: null, vvar: null, cvar: null,
+            kern: null, gpos: null, cvtFunits: null, fpgm: null, prep: null,
+            normalizedCoords: Array.Empty<float>(), vhea: null, vmtx: null, math: null);
     }
 
     private static OpenTypeFont LoadAtOffset(ReadOnlyMemory<byte> data, int faceOffset)

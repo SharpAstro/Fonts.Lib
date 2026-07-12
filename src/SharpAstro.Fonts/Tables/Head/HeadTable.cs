@@ -29,6 +29,14 @@ public sealed class HeadTable
         IndexToLocFormat = indexToLocFormat;
     }
 
+    /// <summary>
+    /// Synthesize a 'head' for a bare CFF program (CIDFontType0 /FontFile3), which
+    /// ships no SFNT tables. Units-per-em and the bounding box come from the CFF
+    /// FontMatrix / FontBBox; IndexToLocFormat is irrelevant (no 'loca'), MacStyle 0.
+    /// </summary>
+    internal static HeadTable ForCff(ushort unitsPerEm, short xMin, short yMin, short xMax, short yMax)
+        => new(unitsPerEm, xMin, yMin, xMax, yMax, macStyle: 0, indexToLocFormat: 0);
+
     public static HeadTable Parse(ReadOnlySpan<byte> data)
     {
         var r = new BigEndianReader(data);
