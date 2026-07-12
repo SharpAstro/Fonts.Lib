@@ -49,6 +49,16 @@ public sealed class MaxpTable
         MaxComponentDepth = maxComponentDepth;
     }
 
+    /// <summary>
+    /// Synthesize a v0.5 'maxp' for a bare CFF program, whose glyph count is the
+    /// CharStrings INDEX count. CFF has no TrueType hinting, so the v1.0 fields keep
+    /// their v0.5 defaults (MaxZones = 2, everything else 0) — same as
+    /// <see cref="Parse"/> takes for a real v0.5 table.
+    /// </summary>
+    internal static MaxpTable ForCff(ushort numGlyphs)
+        => new(version: 0x00005000, numGlyphs,
+            0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0);
+
     public static MaxpTable Parse(ReadOnlySpan<byte> data)
     {
         var r = new BigEndianReader(data);

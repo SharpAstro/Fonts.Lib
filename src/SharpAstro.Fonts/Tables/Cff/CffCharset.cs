@@ -21,6 +21,22 @@ internal sealed class CffCharset
     public ushort GetSid(uint gid)
         => gid < (uint)GidToSid.Length ? GidToSid[gid] : (ushort)0;
 
+    /// <summary>
+    /// Build the inverse map for a CID-keyed font: CID → GID. For CIDFontType0
+    /// (CFF CIDFont) the charset stores GID → CID, but glyph selection runs the
+    /// other way — a PDF hands over a CID and the renderer needs the GID. Under an
+    /// Identity charset this is the identity map, but subsetters routinely renumber,
+    /// so it must be inverted explicitly. Lowest GID wins on the (spec-illegal but
+    /// occasionally seen) duplicate-CID case, matching FreeType's first-wins scan.
+    /// </summary>
+    public Dictionary<uint, uint> BuildCidToGid()
+    {
+        var map = new Dictionary<uint, uint>(GidToSid.Length);
+        for (var gid = 0; gid < GidToSid.Length; gid++)
+            map.TryAdd(GidToSid[gid], (uint)gid);
+        return map;
+    }
+
     public static CffCharset Parse(ReadOnlySpan<byte> table, int offset, int numGlyphs)
     {
         var arr = new ushort[numGlyphs];

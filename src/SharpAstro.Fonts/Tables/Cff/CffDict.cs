@@ -164,6 +164,7 @@ internal static class TopDictOps
     public const int FamilyName = 3;
     public const int Weight = 4;
     public const int FontBbox = 5;
+    public const int FontMatrix = 0x0c07; // [sx 0 0 sy 0 0]; default [0.001 0 0 0.001 0 0] → 1000 upem
     public const int Charset = 15;       // offset to charset
     public const int Encoding = 16;      // offset to encoding (CFF1)
     public const int CharStrings = 17;   // offset to CharStrings INDEX

@@ -29,6 +29,14 @@ public sealed class SfntDirectory
     public bool TryGet(Tag tag, out TableRecord record) => Tables.TryGetValue(tag, out record);
 
     /// <summary>
+    /// A directory with no table records, for a synthesized face (a bare CFF program
+    /// has no SFNT wrapper). <see cref="TryGet"/> always misses, so satellites that
+    /// probe for GSUB/GDEF etc. correctly find nothing.
+    /// </summary>
+    internal static SfntDirectory Empty(uint sfntVersion)
+        => new(sfntVersion, FrozenDictionary<Tag, TableRecord>.Empty);
+
+    /// <summary>
     /// Parse the offset table + directory from the start of an SFNT or one
     /// face within a TTC. Pass the offset of the offset table within
     /// <paramref name="data"/> if loading a TTC face.
