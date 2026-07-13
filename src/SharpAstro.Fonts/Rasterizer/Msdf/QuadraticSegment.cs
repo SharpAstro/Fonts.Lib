@@ -107,12 +107,13 @@ internal sealed class QuadraticSegment : EdgeSegment
 
     public override void AddRayCrossings(double y, double xOrigin, ref int winding)
     {
+        // Single interior y-extremum where dY/dt = 2(ab + t·br).Y = 0.
         var ab = _p1 - _p0;
         var br = _p2 - _p1 - ab;
-        Span<double> t = stackalloc double[2];
-        var n = EquationSolver.SolveQuadratic(t, br.Y, 2 * ab.Y, _p0.Y - y);
-        if (n < 0)
-            n = 0;
-        CountRoots(t, n, y, xOrigin, ref winding);
+        Span<double> ext = stackalloc double[1];
+        var n = 0;
+        if (br.Y != 0)
+            ext[n++] = -ab.Y / br.Y;
+        CountMonotoneCrossings(_p0.Y, _p2.Y, ext, n, y, xOrigin, ref winding);
     }
 }

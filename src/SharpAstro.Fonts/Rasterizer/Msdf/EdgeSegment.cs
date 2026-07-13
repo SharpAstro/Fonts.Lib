@@ -72,21 +72,59 @@ internal abstract class EdgeSegment
 
     protected static int Sign(double n) => n > 0 ? 1 : n < 0 ? -1 : 0;
 
-    /// <summary>Net signed crossings of the simple quadratic/linear roots for a horizontal ray, shared by the segments.</summary>
-    protected void CountRoots(ReadOnlySpan<double> roots, int count, double y, double xOrigin, ref int winding)
+    /// <summary>
+    /// Net signed ray crossings for a curve segment, counted per <em>y-monotone piece</em>
+    /// (pieces split at the interior roots of dY/dt) with the same half-open interval rule the
+    /// linear segment uses: a piece traversing y from <c>ya</c> to <c>yb</c> crosses the ray iff
+    /// <c>y ∈ [min, max)</c> including the piece's LOW end and excluding its HIGH end, signed by
+    /// the traversal direction. This makes shared joints count exactly once and tangent touches
+    /// net zero — counting raw polynomial roots with t ∈ [0,1] inclusive double-counts a ray
+    /// through a segment joint (fonts split curves at extrema, so round glyphs are full of
+    /// them), inverting the winding for the rest of the scanline; ErrorCorrect then bakes that
+    /// inversion into the field as a one-row stripe of phantom ink (the "defective o/c/g/b"
+    /// dashes). The crossing parameter is located by bisection on the monotone piece, which is
+    /// immune to root-solver edge cases at t≈0/1.
+    /// <paramref name="y0"/>/<paramref name="y1"/> are the segment's exact endpoint Y values
+    /// (bit-identical to the adjacent segments' shared endpoints, keeping the half-open
+    /// boundaries consistent across joints).
+    /// </summary>
+    protected void CountMonotoneCrossings(double y0, double y1, ReadOnlySpan<double> interiorExtrema, int extremaCount,
+        double y, double xOrigin, ref int winding)
     {
-        for (var i = 0; i < count; i++)
+        Span<double> ts = stackalloc double[4];
+        Span<double> ys = stackalloc double[4];
+        var m = 0;
+        ts[m] = 0; ys[m++] = y0;
+        // collect interior dY/dt roots in (0,1), sorted (a quadratic solve may return them unordered)
+        for (var i = 0; i < extremaCount; i++)
         {
-            var t = roots[i];
-            if (t < 0 || t > 1)
-                continue;
-            if (Point(t).X <= xOrigin)
-                continue;
-            var dyAtT = Direction(t).Y;
-            if (dyAtT > 0)
-                winding++;
-            else if (dyAtT < 0)
-                winding--;
+            var t = interiorExtrema[i];
+            if (t <= 0 || t >= 1) continue;
+            var j = m++;
+            while (j > 1 && ts[j - 1] > t) { ts[j] = ts[j - 1]; ys[j] = ys[j - 1]; j--; }
+            ts[j] = t; ys[j] = Point(t).Y;
+        }
+        ts[m] = 1; ys[m++] = y1;
+
+        for (var i = 0; i + 1 < m; i++)
+        {
+            double ya = ys[i], yb = ys[i + 1];
+            int sign;
+            if (ya <= y && y < yb) sign = 1;        // ascending piece: [ya, yb)
+            else if (yb <= y && y < ya) sign = -1;  // descending piece: [yb, ya)
+            else continue;
+
+            // bisect the monotone piece for the crossing parameter
+            double lo = ts[i], hi = ts[i + 1];
+            var ascending = sign > 0;
+            for (var it = 0; it < 40; it++)
+            {
+                var mid = 0.5 * (lo + hi);
+                if (Point(mid).Y <= y == ascending) lo = mid;
+                else hi = mid;
+            }
+            if (Point(0.5 * (lo + hi)).X > xOrigin)
+                winding += sign;
         }
     }
 }

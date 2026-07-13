@@ -134,13 +134,14 @@ internal sealed class CubicSegment(Vector2D p0, Vector2D p1, Vector2D p2, Vector
 
     public override void AddRayCrossings(double y, double xOrigin, ref int winding)
     {
+        // Up to two interior y-extrema where dY/dt = 3c3·t² + 2c2·t + c1 (Y components) = 0.
         var c3 = _p3 - 3 * _p2 + 3 * _p1 - _p0;
         var c2 = 3 * (_p2 - 2 * _p1 + _p0);
         var c1 = 3 * (_p1 - _p0);
-        Span<double> t = stackalloc double[3];
-        var n = EquationSolver.SolveCubic(t, c3.Y, c2.Y, c1.Y, _p0.Y - y);
+        Span<double> ext = stackalloc double[2];
+        var n = EquationSolver.SolveQuadratic(ext, 3 * c3.Y, 2 * c2.Y, c1.Y);
         if (n < 0)
             n = 0;
-        CountRoots(t, n, y, xOrigin, ref winding);
+        CountMonotoneCrossings(_p0.Y, _p3.Y, ext, n, y, xOrigin, ref winding);
     }
 }
