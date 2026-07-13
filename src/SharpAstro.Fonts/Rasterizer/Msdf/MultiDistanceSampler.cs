@@ -79,7 +79,15 @@ internal struct MultiDistanceSampler()
 
     public void AddEdge(EdgeSegment edge, Vector2D p)
     {
-        var distance = edge.SignedDistanceTo(p, out var param);
+        // Guarded devirtualization: the edge leaves are sealed, so testing the concrete type
+        // binds SignedDistanceTo to a direct call the compiler can inline. Under NativeAOT
+        // (no dynamic PGO to speculate the receiver) this is the only way the per-texel distance
+        // call — the hot loop's dominant cost — devirtualizes at all.
+        SignedDistance distance;
+        double param;
+        if (edge is LinearSegment ls) distance = ls.SignedDistanceTo(p, out param);
+        else if (edge is QuadraticSegment qs) distance = qs.SignedDistanceTo(p, out param);
+        else distance = ((CubicSegment)edge).SignedDistanceTo(p, out param);
 
         if ((edge.Color & EdgeColor.Red) != 0)
             _r.AddTrueDistance(edge, distance, param);
