@@ -77,7 +77,7 @@ internal struct MultiDistanceSampler()
     private PerChannelSelector _b = new();
     private SignedDistance _trueDistance = SignedDistance.Infinite;
 
-    public void AddEdge(EdgeSegment prev, EdgeSegment edge, EdgeSegment next, Vector2D p)
+    public void AddEdge(EdgeSegment edge, Vector2D p)
     {
         var distance = edge.SignedDistanceTo(p, out var param);
 
@@ -90,22 +90,18 @@ internal struct MultiDistanceSampler()
         if (SignedDistance.IsCloser(distance, _trueDistance))
             _trueDistance = distance;
 
-        var ap = p - edge.Point(0);
-        var bp = p - edge.Point(1);
-        var aDir = edge.Direction(0).Normalize(allowZero: true);
-        var bDir = edge.Direction(1).Normalize(allowZero: true);
-        var prevDir = prev.Direction(1).Normalize(allowZero: true);
-        var nextDir = next.Direction(0).Normalize(allowZero: true);
+        var ap = p - edge.PA;
+        var bp = p - edge.PB;
 
         // Bisector tests: only consider the start/end perpendicular when the point is on the outer side of the
         // vertex bisector, so the perpendicular never cuts across a convex corner.
-        var add = Vector2D.Dot(ap, (prevDir + aDir).Normalize(allowZero: true));
-        var bdd = -Vector2D.Dot(bp, (bDir + nextDir).Normalize(allowZero: true));
+        var add = Vector2D.Dot(ap, edge.BisectorA);
+        var bdd = -Vector2D.Dot(bp, edge.BisectorB);
 
         if (add > 0)
         {
             var pd = distance.Distance;
-            if (GetPerpendicularDistance(ref pd, ap, -aDir))
+            if (GetPerpendicularDistance(ref pd, ap, -edge.DirA))
             {
                 pd = -pd;
                 AddPerp(edge.Color, pd);
@@ -115,7 +111,7 @@ internal struct MultiDistanceSampler()
         if (bdd > 0)
         {
             var pd = distance.Distance;
-            if (GetPerpendicularDistance(ref pd, bp, bDir))
+            if (GetPerpendicularDistance(ref pd, bp, edge.DirB))
                 AddPerp(edge.Color, pd);
         }
     }

@@ -34,6 +34,7 @@ internal static class MsdfGenerator
     {
         var invRange = 1.0 / rangeUnits;
         var windings = ComputeWindings(shape);
+        CacheEdgeGeometry(shape);
 
         for (var py = 0; py < height; py++)
             GenerateRow(shape, windings, pixels, width, py, invRange, projection);
@@ -41,6 +42,20 @@ internal static class MsdfGenerator
         CorrectPolarity(shape, pixels, width, height, projection);
         ErrorCorrect(shape, pixels, width, height, projection);
         ErrorCorrectInterpolation(pixels, width, height);
+    }
+
+    /// <summary>Fill the per-edge hoisted constants (endpoints, tangents, bisectors) the sampler reads per texel.</summary>
+    private static void CacheEdgeGeometry(Shape shape)
+    {
+        foreach (var contour in shape.Contours)
+        {
+            var edges = contour.Edges;
+            var m = edges.Count;
+            for (var j = 0; j < m; j++)
+                edges[j].CacheEndpointGeometry();
+            for (var j = 0; j < m; j++)
+                edges[j].CacheBisectors(edges[(j - 1 + m) % m], edges[(j + 1) % m]);
+        }
     }
 
     /// <summary>+1 for a clockwise (filled, in TrueType y-up) contour, −1 for counter-clockwise (a hole).</summary>
@@ -85,7 +100,7 @@ internal static class MsdfGenerator
             var edges = shape.Contours[i].Edges;
             var m = edges.Count;
             for (var j = 0; j < m; j++)
-                sampler.AddEdge(edges[(j - 1 + m) % m], edges[j], edges[(j + 1) % m], p);
+                sampler.AddEdge(edges[j], p);
             samplers[i] = sampler;
         }
 

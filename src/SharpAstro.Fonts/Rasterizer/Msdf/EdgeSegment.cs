@@ -11,6 +11,28 @@ internal abstract class EdgeSegment
 {
     public EdgeColor Color = EdgeColor.White;
 
+    // Per-edge constants hoisted out of the per-texel sampling loop: endpoints, normalized
+    // endpoint tangents, and the vertex bisectors shared with the neighbouring edges. Filled
+    // once per glyph by MsdfGenerator.Generate before sampling; AddEdge reads them at every
+    // (texel × edge) instead of renormalizing six loop-invariant vectors.
+    public Vector2D PA, PB;
+    public Vector2D DirA, DirB;
+    public Vector2D BisectorA, BisectorB;
+
+    public void CacheEndpointGeometry()
+    {
+        PA = Point(0);
+        PB = Point(1);
+        DirA = Direction(0).Normalize(allowZero: true);
+        DirB = Direction(1).Normalize(allowZero: true);
+    }
+
+    public void CacheBisectors(EdgeSegment prev, EdgeSegment next)
+    {
+        BisectorA = (prev.DirB + DirA).Normalize(allowZero: true);
+        BisectorB = (DirB + next.DirA).Normalize(allowZero: true);
+    }
+
     /// <summary>The point on the segment at parameter <paramref name="t"/> ∈ [0,1].</summary>
     public abstract Vector2D Point(double t);
 
