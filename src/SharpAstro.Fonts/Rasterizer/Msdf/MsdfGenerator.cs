@@ -40,6 +40,7 @@ internal static class MsdfGenerator
 
         CorrectPolarity(shape, pixels, width, height, projection);
         ErrorCorrect(shape, pixels, width, height, projection);
+        ErrorCorrectInterpolation(pixels, width, height);
     }
 
     /// <summary>+1 for a clockwise (filled, in TrueType y-up) contour, −1 for counter-clockwise (a hole).</summary>
@@ -241,6 +242,104 @@ internal static class MsdfGenerator
             }
         }
     }
+
+    // Adjacency offsets visited once per texel pair (right, down, and the two diagonals).
+    private static readonly (int Dx, int Dy)[] Neighbors = { (1, 0), (0, 1), (1, 1), (-1, 1) };
+    // A median may leave the endpoint interval by this much before it counts as an artifact —
+    // absorbs float noise so only real spurious extrema (which overshoot far more) are corrected.
+    private const float OvershootEpsilon = 0.02f;
+
+    /// <summary>
+    /// Interpolation-aware error correction (msdfgen's artifact classifier). The per-texel
+    /// <see cref="ErrorCorrect"/> only reconciles texel <em>centres</em>; it cannot see errors that
+    /// appear <em>between</em> texels once the atlas cell is bilinearly upscaled on the GPU. The
+    /// reconstructed shape is median(R,G,B); the GPU interpolates each channel before taking the
+    /// median, so along an edge between two texels the median is piecewise-linear and can develop a
+    /// spurious extremum — overshooting past both endpoints. A same-side overshoot invents an inside
+    /// region where there is none (e.g. the stray bar bridging a bold 'R''s baseline legs); an
+    /// overshoot beside a real edge spikes the reconstruction next to the ink.
+    ///
+    /// <para>Classify a texel pair as an artifact when the interpolated median leaves the closed
+    /// interval bounded by the two endpoint medians (by more than <see cref="OvershootEpsilon"/>).
+    /// The median can only turn at a channel-crossing breakpoint, so evaluating those catches every
+    /// extremum. A genuine edge or sharp corner moves the median <em>monotonically</em> between its
+    /// endpoints — it never leaves the interval — so corners are never flagged and multi-channel
+    /// sharpening survives. Offending texels collapse to their true-distance channel (A, already
+    /// sign-correct after <see cref="ErrorCorrect"/>), making the reconstruction single-channel there
+    /// so it can no longer overshoot. No tuning threshold on the field value is involved.</para>
+    /// </summary>
+    private static void ErrorCorrectInterpolation(float[] px, int width, int height)
+    {
+        // Iterate to a fixed point: collapsing a texel changes its median, which can expose a
+        // smaller residual overshoot with an as-yet-uncollapsed neighbour at the correction
+        // boundary (visible as a faint antialiased ghost, since the shader smoothsteps the median
+        // across 0.5 — a value that lands just inside the band still tints). A handful of passes
+        // converges; cap it so a pathological cell can't spin.
+        for (var pass = 0; pass < 8; pass++)
+        {
+            var mark = new bool[width * height];
+            var any = false;
+            for (var y = 0; y < height; y++)
+            {
+                for (var x = 0; x < width; x++)
+                {
+                    var o = (y * width + x) * 4;
+                    float rt = px[o], gt = px[o + 1], bt = px[o + 2];
+                    var medT = Median(rt, gt, bt);
+
+                    foreach (var (dx, dy) in Neighbors)
+                    {
+                        int nx = x + dx, ny = y + dy;
+                        if ((uint)nx >= (uint)width || (uint)ny >= (uint)height) continue;
+                        var oo = (ny * width + nx) * 4;
+                        float rn = px[oo], gn = px[oo + 1], bn = px[oo + 2];
+                        var medN = Median(rn, gn, bn);
+                        if (!MedianOvershoots(rt, gt, bt, rn, gn, bn, Math.Min(medT, medN), Math.Max(medT, medN)))
+                            continue;
+                        mark[y * width + x] = true;
+                        mark[ny * width + nx] = true;
+                        any = true;
+                    }
+                }
+            }
+
+            if (!any) break;
+            for (var i = 0; i < mark.Length; i++)
+            {
+                if (!mark[i]) continue;
+                var o = i * 4;
+                var a = px[o + 3];
+                px[o] = a;
+                px[o + 1] = a;
+                px[o + 2] = a;
+            }
+        }
+    }
+
+    // True when the median of the two texels' linearly-interpolated channels leaves [lo, hi] (the
+    // interval spanned by the endpoint medians) at any interior channel-crossing breakpoint — i.e.
+    // the median has a spurious extremum rather than moving monotonically between the endpoints.
+    private static bool MedianOvershoots(float rt, float gt, float bt, float rn, float gn, float bn, float lo, float hi)
+        => OvershootsAt(CrossTau(rt, rn, gt, gn), rt, gt, bt, rn, gn, bn, lo, hi)  // r == g
+        || OvershootsAt(CrossTau(gt, gn, bt, bn), rt, gt, bt, rn, gn, bn, lo, hi)  // g == b
+        || OvershootsAt(CrossTau(rt, rn, bt, bn), rt, gt, bt, rn, gn, bn, lo, hi); // r == b
+
+    private static bool OvershootsAt(float t, float rt, float gt, float bt, float rn, float gn, float bn, float lo, float hi)
+    {
+        if (float.IsNaN(t) || t <= 0f || t >= 1f) return false;
+        var m = Median(Lerp(rt, rn, t), Lerp(gt, gn, t), Lerp(bt, bn, t));
+        return m < lo - OvershootEpsilon || m > hi + OvershootEpsilon;
+    }
+
+    // τ ∈ (0,1) where channels a and b (each linear from the t-texel to the n-texel) are equal, or NaN.
+    private static float CrossTau(float a0, float a1, float b0, float b1)
+    {
+        var denom = (a1 - a0) - (b1 - b0);
+        if (Math.Abs(denom) < 1e-6f) return float.NaN;
+        return (b0 - a0) / denom;
+    }
+
+    private static float Lerp(float a, float b, float t) => a + (b - a) * t;
 
     private static float Median(float a, float b, float c) => Math.Max(Math.Min(a, b), Math.Min(Math.Max(a, b), c));
 }
