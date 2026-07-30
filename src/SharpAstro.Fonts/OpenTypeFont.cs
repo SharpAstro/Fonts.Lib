@@ -198,6 +198,70 @@ public sealed class OpenTypeFont
         Prep = prep;
         _normalizedCoords = normalizedCoords;
         _preferredCmap = cmap?.PreferredUnicodeSubtable();
+        // 'name' and 'OS/2' are parsed on demand: rendering never reads them, so the common path
+        // shouldn't pay for them. Lazy<T> (not a plain cached field) because instances are
+        // documented thread-safe and an unbarriered publish could hand another thread the null.
+        _name = new Lazy<Tables.Name.NameTable?>(ParseName);
+        _os2 = new Lazy<Tables.Os2.Os2Table?>(ParseOs2);
+    }
+
+    private readonly Lazy<Tables.Name.NameTable?> _name;
+    private readonly Lazy<Tables.Os2.Os2Table?> _os2;
+
+    private Tables.Name.NameTable? ParseName()
+    {
+        if (!TryGetTable(Tags.Name, out var table)) return null;
+        try { return Tables.Name.NameTable.Parse(table.Span); }
+        catch (Exception) { return null; }
+    }
+
+    private Tables.Os2.Os2Table? ParseOs2()
+    {
+        // Version 0 is 78 bytes; anything shorter is truncated past the point of use.
+        if (!TryGetTable(Tags.OS2, out var table) || table.Length < 64) return null;
+        try { return Tables.Os2.Os2Table.Parse(table.Span); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// The font's 'name' table — its own account of what family/style it is. Null when the font
+    /// ships no 'name' table (bare CFF programs and some PDF subsets) or it fails to parse.
+    /// Parsed on first access.
+    /// </summary>
+    public Tables.Name.NameTable? Name => _name.Value;
+
+    /// <summary>
+    /// The font's 'OS/2' classification table. Null when absent or truncated. Parsed on first access.
+    /// </summary>
+    public Tables.Os2.Os2Table? Os2 => _os2.Value;
+
+    /// <summary>
+    /// True if this is a legacy <b>symbol-encoded</b> font — Wingdings, ZapfDingbats, Adobe
+    /// Symbol — whose glyphs are reached through a (3,0) cmap over the F000–F0FF private-use
+    /// block rather than by real Unicode. This is the PDF font descriptor's /Symbolic sense,
+    /// and it changes how a char code must be mapped.
+    ///
+    /// <para><b>It does not mean "contains symbols."</b> Modern symbol fonts are ordinary
+    /// Unicode fonts: Noto Sans Symbols 2 reports PANOSE 0 / family class 0 and carries normal
+    /// (3,1)/(3,10) cmaps, making it indistinguishable here from a text face — and Segoe UI
+    /// Symbol is metadata-identical to Segoe UI. Choosing a face to draw "▴" is a coverage
+    /// question (<see cref="GetGlyphId(uint)"/>), not a classification one.</para>
+    /// </summary>
+    public bool IsSymbolEncoded
+    {
+        get
+        {
+            // A (3,0) subtable with no genuine Unicode subtable alongside it is the definitive
+            // signal — the font offers no other way in. The OS/2 declarations agree on every
+            // legacy symbol font but are absent on some, so they widen rather than gate.
+            if (Cmap is not null
+                && Cmap.Find(3, 0) is not null
+                && Cmap.Find(3, 1) is null && Cmap.Find(3, 10) is null)
+                return true;
+            var os2 = Os2;
+            return os2 is not null
+                && (os2.IsPictorialPanose || os2.IsSymbolicFamilyClass || os2.DeclaresSymbolCodePage);
+        }
     }
 
     /// <summary>
