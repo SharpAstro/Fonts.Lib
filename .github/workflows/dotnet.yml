@@ -7,6 +7,13 @@ on:
     branches: [ main ]
 
 env:
+  # Minor bump 1.6 -> 1.7: faces can now report who they are. OpenTypeFont.Name
+  # and .Os2 parse the 'name' / 'OS/2' tables lazily (rendering never reads
+  # them), IsSymbolEncoded flags the legacy (3,0)-cmap fonts, and FontFaceReader
+  # lists a file's faces — family, subfamily, PostScript name, weight, style,
+  # and the collection index needed to reach any face past the first in a .ttc —
+  # by seeking to those two tables instead of loading the font. Purely additive.
+  #
   # Minor bump 1.3 -> 1.4: 'cmap' table is now optional. PDF Identity-H subset
   # fonts routinely strip the cmap (CID maps directly to GID; Unicode lookup
   # lives in the PDF's /ToUnicode CMap instead) and previously failed to load
@@ -14,7 +21,7 @@ env:
   # GetGlyphId handles the null case for CharCodeIsGID / EmbeddedSubset hints.
   # Source-compatible for callers that always go through GetGlyphId — direct
   # readers of the Cmap property must accommodate nullability.
-  VERSION_PREFIX: 1.6.${{ github.run_number }}
+  VERSION_PREFIX: 1.7.${{ github.run_number }}
   VERSION_REV: ${{ github.run_attempt }}
   VERSION_HASH: +${{ github.sha }}
   BUILD_CONF: Release
