@@ -9,7 +9,10 @@
     <IsAotCompatible>true</IsAotCompatible>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-    <VersionPrefix>1.7.0</VersionPrefix>
+    <!-- No VersionPrefix here: it derives from VersionMajorMinor in the repo-root
+         Directory.Build.props, so this package and SharpAstro.Fonts.Shaping cannot disagree.
+         Bump it there. -->
+
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/SharpAstro/Fonts.Lib.git</RepositoryUrl>

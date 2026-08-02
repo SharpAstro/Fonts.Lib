@@ -21,10 +21,17 @@ env:
   # GetGlyphId handles the null case for CharCodeIsGID / EmbeddedSubset hints.
   # Source-compatible for callers that always go through GetGlyphId — direct
   # readers of the Cmap property must accommodate nullability.
-  VERSION_PREFIX: 1.7.${{ github.run_number }}
+  # The NUMBER is deliberately not here any more: it lives in the repo-root
+  # Directory.Build.props (VersionMajorMinor) and the build job reads it back, so it
+  # cannot drift from what the two packages declare. Add the release note above when
+  # you bump it there. (The notes stay in this file because several contain a double
+  # hyphen, which is illegal inside an XML comment.)
   VERSION_REV: ${{ github.run_attempt }}
   VERSION_HASH: +${{ github.sha }}
   BUILD_CONF: Release
+  # The build job CAPTURES a dotnet invocation's stdout to resolve the version, so the
+  # SDK's first-run banner must not be able to land in it.
+  DOTNET_NOLOGO: 1
 
 jobs:
   build:
@@ -34,6 +41,20 @@ jobs:
     - uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 10.0.x
+    - name: Resolve version prefix
+      # Read the major.minor back from the one place it is written (Directory.Build.props) instead of
+      # restating it here. -getProperty only EVALUATES the file: nothing is built and no restore is
+      # needed, so this can run before restore. The value is CAPTURED, so nothing else may print to
+      # stdout: DOTNET_NOLOGO (workflow env) keeps the SDK first-run banner out, and the shape check
+      # makes anything unexpected, or a renamed property, fail the run rather than quietly publishing
+      # both packages as ".<run>".
+      run: |
+        MM="$(dotnet msbuild Directory.Build.props -getProperty:VersionMajorMinor -nologo)"
+        case "$MM" in
+          [0-9]*.[0-9]*) ;;
+          *) echo "::error::VersionMajorMinor did not resolve from Directory.Build.props (got '$MM')"; exit 1 ;;
+        esac
+        echo "VERSION_PREFIX=${MM}.${{ github.run_number }}" >> "$GITHUB_ENV"
     - name: Restore dependencies
       run: dotnet restore
     - name: Build

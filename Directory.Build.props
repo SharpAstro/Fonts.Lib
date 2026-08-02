@@ -1,6 +1,20 @@
 <Project>
 
   <PropertyGroup>
+    <!-- THE version for both packages in this repo, and the only place it is written. It used to be
+         stated three times: VersionPrefix in SharpAstro.Fonts.csproj, the same again in
+         SharpAstro.Fonts.Shaping.csproj, and VERSION_PREFIX in the workflow. CI stamps one
+         -p:Version across the solution, so the two csproj copies only ever surfaced in a local
+         build, and nothing compared them to each other or to the workflow.
+         That exact arrangement drifted in DIR.Lib, whose Shaping satellite sat at 6.8.0 while the
+         library was 7.5.0, so a local dotnet pack shipped it a full major behind the thing it ships
+         with. These two are the same pairing, so they get the same fix before it happens here.
+         The workflow now READS this back (dotnet msbuild -getProperty:VersionMajorMinor), so a
+         release bump is this one line and CI cannot publish a version the packages disagree with. -->
+    <VersionMajorMinor>1.7</VersionMajorMinor>
+    <!-- Local builds get Major.Minor.0; CI passes -p:Version=Major.Minor.<run><attempt>+<sha>, and
+         the condition lets it win. -->
+    <VersionPrefix Condition="'$(VersionPrefix)' == ''">$(VersionMajorMinor).0</VersionPrefix>
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
