@@ -26,19 +26,27 @@ public abstract class CmapSubtable
     /// </summary>
     public abstract uint GetGlyphId(uint codepoint);
 
+    /// <summary>
+    /// Parse the subtable at <paramref name="offset"/>, or null when the format is unsupported
+    /// or the subtable's declared counts don't fit the physical table. A malformed subtable is
+    /// dropped, never fatal: PDF subset fonts routinely truncate or overstate one subtable while
+    /// the others are fine, and rejecting the whole font over it downgrades every glyph to a
+    /// system-face fallback. Each format parser bounds-checks before reading — no exceptions
+    /// as control flow.
+    /// </summary>
     internal static CmapSubtable? TryParse(ReadOnlySpan<byte> tableData, int offset,
         ushort platformId, ushort encodingId)
     {
-        if (offset + 2 > tableData.Length) return null;
+        if (offset < 0 || offset + 2 > tableData.Length) return null;
         var r = new BigEndianReader(tableData, offset);
         var format = r.ReadUInt16();
         return format switch
         {
-            0 => Format0Subtable.Parse(tableData, offset, platformId, encodingId),
-            4 => Format4Subtable.Parse(tableData, offset, platformId, encodingId),
-            6 => Format6Subtable.Parse(tableData, offset, platformId, encodingId),
-            12 => Format12Subtable.Parse(tableData, offset, platformId, encodingId),
-            14 => Format14Subtable.Parse(tableData, offset, platformId, encodingId),
+            0 => Format0Subtable.TryParse(tableData, offset, platformId, encodingId),
+            4 => Format4Subtable.TryParse(tableData, offset, platformId, encodingId),
+            6 => Format6Subtable.TryParse(tableData, offset, platformId, encodingId),
+            12 => Format12Subtable.TryParse(tableData, offset, platformId, encodingId),
+            14 => Format14Subtable.TryParse(tableData, offset, platformId, encodingId),
             _ => null, // unsupported; ignored
         };
     }
@@ -55,11 +63,12 @@ internal sealed class Format0Subtable : CmapSubtable
     public override uint GetGlyphId(uint codepoint)
         => codepoint < 256 ? _glyphIdArray[codepoint] : 0u;
 
-    internal static Format0Subtable Parse(ReadOnlySpan<byte> data, int offset,
+    internal static new Format0Subtable? TryParse(ReadOnlySpan<byte> data, int offset,
         ushort plat, ushort enc)
     {
+        // format(uint16) + length(uint16) + language(uint16) + glyphIdArray[256]
+        if (offset + 6 + 256 > data.Length) return null;
         var r = new BigEndianReader(data, offset);
-        // format(uint16) + length(uint16) + language(uint16)
         r.Skip(6);
         var arr = r.ReadBytes(256).ToArray();
         return new Format0Subtable(plat, enc, arr);
@@ -127,9 +136,12 @@ internal sealed class Format4Subtable : CmapSubtable
         return (uint)((raw + _idDelta[lo]) & 0xFFFF);
     }
 
-    internal static Format4Subtable Parse(ReadOnlySpan<byte> data, int offset,
+    internal static new Format4Subtable? TryParse(ReadOnlySpan<byte> data, int offset,
         ushort plat, ushort enc)
     {
+        // Header: format + length + language + segCountX2 + searchRange + entrySelector
+        // + rangeShift (7 × uint16).
+        if (offset + 14 > data.Length) return null;
         var r = new BigEndianReader(data, offset);
         // format(uint16)
         r.Skip(2);
@@ -140,6 +152,11 @@ internal sealed class Format4Subtable : CmapSubtable
         var segCount = segCountX2 / 2;
         // searchRange + entrySelector + rangeShift (all uint16)
         r.Skip(6);
+
+        // The four segment arrays (endCode, startCode, idDelta, idRangeOffset — segCountX2
+        // bytes each) plus the reservedPad between endCode and startCode must fit; a table
+        // truncated inside them has no usable mappings.
+        if (offset + 16 + 4 * segCountX2 > data.Length) return null;
 
         var endCode = new ushort[segCount];
         for (var i = 0; i < segCount; i++) endCode[i] = r.ReadUInt16();
@@ -154,8 +171,12 @@ internal sealed class Format4Subtable : CmapSubtable
         var idRangeOffset = new ushort[segCount];
         for (var i = 0; i < segCount; i++) idRangeOffset[i] = r.ReadUInt16();
 
-        // Remaining bytes within the subtable form glyphIdArray.
-        var subtableEnd = offset + length;
+        // Remaining bytes within the subtable form glyphIdArray. The declared length is not
+        // trusted past the physical table: PDF subsetters overstate it (Canon's 2008-era
+        // subsets declare +6 bytes), and a font whose mappings are otherwise intact would be
+        // rejected for those phantom bytes. Lookups already bounds-check glyphIndex, so any
+        // genuinely missing tail entries just resolve to .notdef.
+        var subtableEnd = Math.Min(offset + length, data.Length);
         var glyphIdBytes = subtableEnd - r.Position;
         if (glyphIdBytes < 0) glyphIdBytes = 0;
         var glyphIdArray = new ushort[glyphIdBytes / 2];
@@ -187,14 +208,16 @@ internal sealed class Format6Subtable : CmapSubtable
         return _glyphIdArray[idx];
     }
 
-    internal static Format6Subtable Parse(ReadOnlySpan<byte> data, int offset,
+    internal static new Format6Subtable? TryParse(ReadOnlySpan<byte> data, int offset,
         ushort plat, ushort enc)
     {
+        // format(uint16) + length(uint16) + language(uint16) + firstCode + entryCount
+        if (offset + 10 > data.Length) return null;
         var r = new BigEndianReader(data, offset);
-        // format(uint16) + length(uint16) + language(uint16)
         r.Skip(6);
         var firstCode = r.ReadUInt16();
         var entryCount = r.ReadUInt16();
+        if (offset + 10 + entryCount * 2 > data.Length) return null;
         var arr = new ushort[entryCount];
         for (var i = 0; i < entryCount; i++) arr[i] = r.ReadUInt16();
         return new Format6Subtable(plat, enc, firstCode, arr);
@@ -314,18 +337,23 @@ internal sealed class Format14Subtable : CmapSubtable
         return VariationResult.NotDefined;
     }
 
-    internal static Format14Subtable Parse(ReadOnlySpan<byte> data, int offset,
+    internal static new Format14Subtable? TryParse(ReadOnlySpan<byte> data, int offset,
         ushort plat, ushort enc)
     {
+        // format(uint16) + length(uint32) + numVarSelectorRecords(uint32)
+        if (offset + 10 > data.Length) return null;
         var r = new BigEndianReader(data, offset);
         // format (uint16) = 14
         r.Skip(2);
         // length (uint32) — total byte length of this subtable
         r.Skip(4);
         var numVarSelectorRecords = r.ReadUInt32();
+        // Selector records are 11 bytes each (uint24 + uint32 + uint32); also rejects a
+        // garbage count before it turns into a giant allocation.
+        if (numVarSelectorRecords > (uint)(data.Length - offset - 10) / 11) return null;
 
         var records = new VarSelectorRecord[numVarSelectorRecords];
-        // First pass: read the selector records (each 11 bytes: uint24 + uint32 + uint32).
+        // First pass: read the selector records.
         var selectorEntries = new (uint VarSelector, uint DefaultUVSOffset, uint NonDefaultUVSOffset)[numVarSelectorRecords];
         for (var i = 0; i < numVarSelectorRecords; i++)
         {
@@ -335,17 +363,22 @@ internal sealed class Format14Subtable : CmapSubtable
             selectorEntries[i] = (varSelector, defaultUVSOffset, nonDefaultUVSOffset);
         }
 
-        // Second pass: parse default and non-default UVS tables.
+        // Second pass: parse default and non-default UVS tables. Each is offset-addressed
+        // with its own count, so each gets its own fit check.
         for (var i = 0; i < numVarSelectorRecords; i++)
         {
             var (varSelector, defaultOff, nonDefaultOff) = selectorEntries[i];
 
-            // Default UVS table: array of (startUnicodeValue uint24, additionalCount uint8).
+            // Default UVS table: numUnicodeValueRanges(uint32), then
+            // (startUnicodeValue uint24, additionalCount uint8) per range.
             (uint, byte)[] defaultRanges;
             if (defaultOff != 0)
             {
-                var dr = new BigEndianReader(data, offset + (int)defaultOff);
+                var tableStart = offset + (int)defaultOff;
+                if (tableStart < 0 || tableStart + 4 > data.Length) return null;
+                var dr = new BigEndianReader(data, tableStart);
                 var numRanges = dr.ReadUInt32();
+                if (numRanges > (uint)(data.Length - tableStart - 4) / 4) return null;
                 defaultRanges = new (uint, byte)[numRanges];
                 for (var j = 0; j < numRanges; j++)
                 {
@@ -359,12 +392,16 @@ internal sealed class Format14Subtable : CmapSubtable
                 defaultRanges = [];
             }
 
-            // Non-default UVS table: array of (unicodeValue uint24, glyphID uint16).
+            // Non-default UVS table: numUVSMappings(uint32), then
+            // (unicodeValue uint24, glyphID uint16) per mapping.
             (uint, uint)[] nonDefaultMappings;
             if (nonDefaultOff != 0)
             {
-                var nr = new BigEndianReader(data, offset + (int)nonDefaultOff);
+                var tableStart = offset + (int)nonDefaultOff;
+                if (tableStart < 0 || tableStart + 4 > data.Length) return null;
+                var nr = new BigEndianReader(data, tableStart);
                 var numMappings = nr.ReadUInt32();
+                if (numMappings > (uint)(data.Length - tableStart - 4) / 5) return null;
                 nonDefaultMappings = new (uint, uint)[numMappings];
                 for (var j = 0; j < numMappings; j++)
                 {
@@ -415,13 +452,16 @@ internal sealed class Format12Subtable : CmapSubtable
         return 0u;
     }
 
-    internal static Format12Subtable Parse(ReadOnlySpan<byte> data, int offset,
+    internal static new Format12Subtable? TryParse(ReadOnlySpan<byte> data, int offset,
         ushort plat, ushort enc)
     {
+        // format(uint16) + reserved(uint16) + length(uint32) + language(uint32) + numGroups(uint32)
+        if (offset + 16 > data.Length) return null;
         var r = new BigEndianReader(data, offset);
-        // format(uint16) + reserved(uint16) + length(uint32) + language(uint32)
         r.Skip(12);
         var numGroups = r.ReadUInt32();
+        // Also rejects a hostile/garbage count before it turns into a giant allocation.
+        if (numGroups > (uint)(data.Length - offset - 16) / 12) return null;
         var startCC = new uint[numGroups];
         var endCC = new uint[numGroups];
         var startGid = new uint[numGroups];

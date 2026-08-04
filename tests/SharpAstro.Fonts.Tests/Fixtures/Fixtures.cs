@@ -11,6 +11,10 @@ internal static class Fixtures
     public const string XXTIIT_Arial_Subset    = "XXTIIT_Arial_subset.ttf";
     public const string Tahoma_Subset          = "Tahoma_subset.ttf";
     public const string ISOCPEUR_Subset        = "ISOCPEUR_subset.ttf";
+    /// <summary>Canon EOS450D manual's D011A key-cap subset (HJIPGJ+D011A): its (3,1) fmt4
+    /// cmap declares a length 6 bytes past the physical cmap table end. Regression fixture for
+    /// tolerating overstated subtable lengths instead of rejecting the font.</summary>
+    public const string D011A_Subset           = "D011A_subset.ttf";
     public const string Merida                 = "Merida.ttf";
     public const string DejaVuSans             = "DejaVuSans.ttf";
     public const string Noto_COLRv1            = "Noto-COLRv1.ttf";
@@ -32,7 +36,7 @@ internal static class Fixtures
     /// <summary>All bundled fixture fonts. Useful for "applies-to-every-font" smoke tests.</summary>
     public static readonly string[] All =
     [
-        XXTIIT_Arial_Subset, Tahoma_Subset, ISOCPEUR_Subset, Merida,
+        XXTIIT_Arial_Subset, Tahoma_Subset, ISOCPEUR_Subset, D011A_Subset, Merida,
         DejaVuSans, Noto_COLRv1, NotoColorEmoji, BabelStoneXiangqiColour,
         SourceSans3, RobotoFlex,
         NotoSansJP, NotoSansKR, NotoSansSC, NotoSansTC,

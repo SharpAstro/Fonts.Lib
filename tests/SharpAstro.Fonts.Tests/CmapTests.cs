@@ -113,4 +113,52 @@ public class CmapTests
         font.GetGlyphId(0x4E00).ShouldBeGreaterThan(0u); // 一
         font.GetGlyphId(0x6F22).ShouldBeGreaterThan(0u); // 漢
     }
+
+    [Fact]
+    public void D011A_OverstatedFmt4Length_StillLoads()
+    {
+        // The subset's (3,1) fmt4 declares a length 6 bytes past the physical cmap table.
+        // Loading used to throw out of the fmt4 glyphIdArray read, rejecting the whole font
+        // (and every glyph in it fell back to a system face). The declared length is now
+        // clamped to the physical table.
+        var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.D011A_Subset));
+        font.NumGlyphs.ShouldBe((ushort)51);
+        font.Cmap.ShouldNotBeNull().Subtables.Count.ShouldBe(2); // (1,0) fmt0 + (3,1) fmt4
+    }
+
+    [Theory]
+    [InlineData(0x31, 5u)]  // '1' — the <ON> key-cap glyph
+    [InlineData(0x32, 6u)]  // '2' — <OFF>
+    [InlineData(0x66, 39u)] // 'f' — <AF>
+    [InlineData(0x67, 40u)] // 'g' — <MF>
+    public void D011A_Fmt4_MapsDespiteOverstatedLength(int codepoint, uint expectedGid)
+    {
+        // The overstatement is 3 phantom trailing glyphIdArray entries; every real mapping
+        // sits inside the physical table, and agrees with the font's (1,0) byte cmap.
+        var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.D011A_Subset));
+        font.GetGlyphId((uint)codepoint).ShouldBe(expectedGid);
+    }
+
+    [Fact]
+    public void TruncatedSubtable_IsDropped_NotFatal()
+    {
+        // A fmt4 whose segment arrays run past the physical table has no usable mappings —
+        // the subtable is dropped, the parse must not throw.
+        // Header claims segCountX2 = 0x40 (32 segments) but the table ends after the header.
+        byte[] cmap =
+        [
+            0x00, 0x00,             // version
+            0x00, 0x01,             // numTables
+            0x00, 0x03, 0x00, 0x01, // (3,1)
+            0x00, 0x00, 0x00, 0x0C, // subtableOffset = 12
+            // fmt4 header at offset 12
+            0x00, 0x04,             // format = 4
+            0x00, 0xFF,             // length (irrelevant — arrays don't fit regardless)
+            0x00, 0x00,             // language
+            0x00, 0x40,             // segCountX2 = 64
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // searchRange/entrySelector/rangeShift
+        ];
+        var table = Tables.Cmap.CmapTable.Parse(cmap);
+        table.Subtables.Count.ShouldBe(0);
+    }
 }
