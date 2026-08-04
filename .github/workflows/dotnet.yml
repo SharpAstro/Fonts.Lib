@@ -7,6 +7,26 @@ on:
     branches: [ main ]
 
 env:
+  # Minor bump 1.7 -> 1.8: PDF subset fonts that used to be rejected outright now load,
+  # and glyphs can be selected by PostScript name. Two independent fixes, both driven by
+  # real PDF-embedded subsets:
+  #   * cmap parsing is tolerant. A subsetter that overstates a subtable's length (Canon's
+  #     2008-era Distiller declares its (3,1) format-4 six bytes past the physical table)
+  #     used to throw, and one bad subtable rejected the entire font -- every glyph in it
+  #     fell back to a system face, or to nothing at all for a symbol font with no system
+  #     equivalent. Format 4 now clamps glyphIdArray to the physical table, and each format
+  #     parser validates its declared counts up front (TryParse, no exceptions as control
+  #     flow) so a malformed subtable is dropped while the rest of the font stands. The
+  #     count checks double as allocation guards for the uint32-counted formats 12 and 14.
+  #   * OpenTypeFont.GetGlyphIdByName resolves a PostScript glyph name through the CFF
+  #     charset (391 standard strings + the font's String INDEX, which was parsed and then
+  #     discarded). This is the lookup a PDF simple font's /Encoding designates -- char code
+  #     to glyph name to glyph -- and for a bare name-keyed CFF carrying no Encoding operator
+  #     it is the only route that exists. Name-keyed fonts now parse their charset too, not
+  #     just CID-keyed ones; a predefined charset keeps SID == GID. CID-keyed fonts and
+  #     TrueType outlines return 0 (no name authority) so callers fall back to cmap lookups.
+  # Purely additive; no existing behaviour changes for a well-formed font.
+  #
   # Minor bump 1.6 -> 1.7: faces can now report who they are. OpenTypeFont.Name
   # and .Os2 parse the 'name' / 'OS/2' tables lazily (rendering never reads
   # them), IsSymbolEncoded flags the legacy (3,0)-cmap fonts, and FontFaceReader
