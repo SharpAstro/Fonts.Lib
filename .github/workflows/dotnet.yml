@@ -26,6 +26,14 @@ env:
   # cannot drift from what the two packages declare. Add the release note above when
   # you bump it there. (The notes stay in this file because several contain a double
   # hyphen, which is illegal inside an XML comment.)
+  # Within 1.7, no X.Y bump and NO value change: that props file now STATES
+  # AssemblyVersion = $(VersionMajorMinor).0.0 rather than leaving it to the SDK
+  # default. The default resolved to the same 1.7.0.0, so both packages ship
+  # identically -- the point is that a default is fragile. The moment any csproj here
+  # sets its own AssemblyVersion it wins silently, and CI stamps -p:Version and
+  # -p:FileVersion but never -p:AssemblyVersion, so nothing would correct it. That is
+  # how DIR.Lib shipped 6.4.0.0 for two majors and SdlVulkan.Renderer shipped
+  # 6.11.0.0. All seven sibling repos now state the rule once, in the props file.
   VERSION_REV: ${{ github.run_attempt }}
   VERSION_HASH: +${{ github.sha }}
   BUILD_CONF: Release

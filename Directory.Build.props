@@ -15,6 +15,15 @@
     <!-- Local builds get Major.Minor.0; CI passes -p:Version=Major.Minor.<run><attempt>+<sha>, and
          the condition lets it win. -->
     <VersionPrefix Condition="'$(VersionPrefix)' == ''">$(VersionMajorMinor).0</VersionPrefix>
+    <!-- Assembly identity, stated rather than left to the SDK. Nothing was wrong here: with no
+         AssemblyVersion anywhere, the SDK defaults it to $(VersionPrefix), which resolves to
+         Major.Minor.0 — the same value this line produces. It is written out because the DEFAULT is what
+         makes it fragile: the moment any csproj in this repo sets its own AssemblyVersion it wins
+         silently, and CI stamps -p:Version and -p:FileVersion but never -p:AssemblyVersion, so nothing
+         would correct it. That is exactly how DIR.Lib shipped 6.4.0.0 for two majors and
+         SdlVulkan.Renderer shipped 6.11.0.0. Only Major.Minor is significant: the build counter stays
+         out, so a republish of the same X.Y does not change assembly identity. -->
+    <AssemblyVersion>$(VersionMajorMinor).0.0</AssemblyVersion>
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
