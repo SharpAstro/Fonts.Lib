@@ -350,6 +350,16 @@ public sealed class OpenTypeFont
         => ValidGid(_preferredCmap?.GetGlyphId(codepoint) ?? 0u);
 
     /// <summary>
+    /// Look up a glyph id by PostScript glyph name — the authority a PDF simple font's
+    /// <c>/Encoding</c> designates (char code → glyph name → glyph). Name-keyed CFF fonts
+    /// resolve through the charset (standard strings + the font's String INDEX); fonts
+    /// without glyph names of any kind — TrueType outlines, CID-keyed CFF — return 0 and
+    /// callers fall back to cmap/char-code strategies. Returns 0 for an unknown name.
+    /// </summary>
+    public uint GetGlyphIdByName(string glyphName)
+        => Cff is { IsCidKeyed: false } cff ? ValidGid(cff.GidForName(glyphName)) : 0u;
+
+    /// <summary>
     /// Look up a glyph id for a (base codepoint, variation selector) pair via
     /// the cmap format 14 subtable. Used for Ideographic Variation Sequences
     /// (IVS) and emoji variation sequences. Returns 0 if not mapped.
