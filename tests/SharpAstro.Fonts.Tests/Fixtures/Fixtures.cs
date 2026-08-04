@@ -15,6 +15,10 @@ internal static class Fixtures
     /// cmap declares a length 6 bytes past the physical cmap table end. Regression fixture for
     /// tolerating overstated subtable lengths instead of rejecting the font.</summary>
     public const string D011A_Subset           = "D011A_subset.ttf";
+    /// <summary>Canon EOS450D manual's Lithos-Bold subset: a bare name-keyed CFF (PDF
+    /// /FontFile3) with NO Encoding operator — glyph selection is only possible by name
+    /// through the charset. Regression fixture for GetGlyphIdByName.</summary>
+    public const string LithosBold_Subset      = "LithosBold_subset.cff";
     public const string Merida                 = "Merida.ttf";
     public const string DejaVuSans             = "DejaVuSans.ttf";
     public const string Noto_COLRv1            = "Noto-COLRv1.ttf";

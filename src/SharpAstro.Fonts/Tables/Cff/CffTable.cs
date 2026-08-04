@@ -42,7 +42,7 @@ internal sealed class CffTable
     /// <summary>FontBBox in font units [xMin yMin xMax yMax], or all-zero if absent.</summary>
     public short[] FontBBox { get; }
 
-    /// <summary>GID→CID charset (CID fonts only); null otherwise or when a
+    /// <summary>GID→SID charset (GID→CID for CID-keyed fonts); null when a
     /// predefined charset (offset 0/1/2) is used.</summary>
     public CffCharset? Charset { get; }
 
@@ -50,10 +50,18 @@ internal sealed class CffTable
     // non-CID fonts or a CID font with a predefined (offset ≤ 2) charset.
     private readonly Dictionary<uint, uint>? _cidToGid;
 
+    // String INDEX — SIDs ≥ 391 name into it. Kept for glyph-name → GID lookup.
+    private readonly CffIndex _strings;
+
+    // Lazy name→GID reverse of the charset (non-CID only); built on first
+    // GidForName call, published lock-free — a racing duplicate build is
+    // idempotent and the loser's map is simply collected.
+    private Dictionary<string, uint>? _nameToGid;
+
     private CffTable(bool isCff2, CffDict topDict, CffIndex globalSubrs,
         CffIndex charStrings, bool isCidKeyed, CffFdSelect? fdSelect,
         CffPrivateDict[] privateDicts, ushort unitsPerEm, short[] fontBBox,
-        CffCharset? charset)
+        CffCharset? charset, CffIndex strings)
     {
         IsCff2 = isCff2;
         TopDict = topDict;
@@ -65,6 +73,7 @@ internal sealed class CffTable
         UnitsPerEm = unitsPerEm;
         FontBBox = fontBBox;
         Charset = charset;
+        _strings = strings;
         _cidToGid = isCidKeyed && charset is not null ? charset.BuildCidToGid() : null;
     }
 
@@ -79,6 +88,41 @@ internal sealed class CffTable
         if (_cidToGid is not null)
             return _cidToGid.TryGetValue(cid, out var gid) ? gid : 0u;
         return cid < (uint)CharStrings.Count ? cid : 0u;
+    }
+
+    /// <summary>
+    /// Glyph id of the glyph named <paramref name="name"/>, or 0. Name-keyed (non-CID)
+    /// fonts only — a CID charset holds CIDs, not name SIDs. This is how a PDF simple
+    /// font's <c>/Encoding</c> selects glyphs: char code → glyph name → charset. A bare
+    /// subset CFF often carries no Encoding operator at all (Lithos-Bold in the Canon
+    /// EOS450D manual), so the charset is the only name authority.
+    /// </summary>
+    public uint GidForName(string name)
+    {
+        if (IsCidKeyed) return 0u;
+        var map = _nameToGid ?? BuildNameToGid();
+        return map.TryGetValue(name, out var gid) ? gid : 0u;
+    }
+
+    private Dictionary<string, uint> BuildNameToGid()
+    {
+        var n = CharStrings.Count;
+        var map = new Dictionary<string, uint>(n, StringComparer.Ordinal);
+        for (var gid = 1; gid < n; gid++)
+        {
+            // No charset operator = the predefined ISOAdobe charset, which is SID == GID.
+            var sid = Charset?.GetSid((uint)gid) ?? (ushort)gid;
+            string name;
+            if (sid < CffStandardStrings.Count)
+                name = CffStandardStrings.Get(sid);
+            else if (sid - CffStandardStrings.Count < _strings.Count)
+                name = System.Text.Encoding.Latin1.GetString(_strings.GetObject(sid - CffStandardStrings.Count));
+            else
+                continue;
+            map.TryAdd(name, (uint)gid); // first wins on (spec-illegal) duplicate names
+        }
+        System.Threading.Interlocked.CompareExchange(ref _nameToGid, map, null);
+        return _nameToGid;
     }
 
     /// <summary>Pick the Private DICT applicable to <paramref name="gid"/>.</summary>
@@ -126,7 +170,8 @@ internal sealed class CffTable
             throw new InvalidDataException("CFF: empty Top DICT INDEX");
         var topDict = CffDict.Parse(topDictIndex.GetObject(0));
 
-        // String INDEX (we don't need string lookup yet — skip it).
+        // String INDEX — kept: SIDs ≥ 391 name into it, and glyph-name → GID lookup
+        // (PDF simple-font /Encoding) resolves names through it.
         var stringIndex = CffIndex.Parse(cffData, pos);
         pos += stringIndex.TotalSize;
 
@@ -179,16 +224,17 @@ internal sealed class CffTable
                 bbox[i] = (short)Math.Clamp(Math.Round(fb[i]), short.MinValue, short.MaxValue);
 
         // Charset (op 15). Offsets 0/1/2 are the predefined charsets (ISOAdobe/Expert/
-        // ExpertSubset) — only meaningful for non-CID fonts, where we don't need the
-        // GID→CID map anyway. A CID font always ships a custom charset at a real offset;
-        // parse it so CID→GID selection is exact even under a renumbered subset.
+        // ExpertSubset). A CID font always ships a custom charset at a real offset;
+        // parse it so CID→GID selection is exact even under a renumbered subset. For
+        // name-keyed fonts the charset is the name authority (GID → SID), consumed by
+        // GidForName — under a predefined charset it stays null and SID == GID.
         CffCharset? charset = null;
         var charsetOff = (int)topDict.GetSingleOr(TopDictOps.Charset, 0);
-        if (isCid && charsetOff > 2)
+        if (charsetOff > 2)
             charset = CffCharset.Parse(span, charsetOff, numGlyphs);
 
         return new CffTable(isCff2: false, topDict, globalSubrs, charStrings,
-            isCidKeyed: isCid, fdSelect, privates, upem, bbox, charset);
+            isCidKeyed: isCid, fdSelect, privates, upem, bbox, charset, stringIndex);
     }
 
     private static CffPrivateDict ParsePrivate(ReadOnlyMemory<byte> cff, CffDict parentDict)
