@@ -3,7 +3,11 @@ using SharpAstro.Fonts.Outlines;
 namespace SharpAstro.Fonts.Rasterizer;
 
 /// <summary>Open-contour endpoint cap style.</summary>
-internal enum LineCap
+// Public because stroke parameters reach the public surface through ShxFont: SHX glyphs
+// are pen paths whose width, cap and join come from the caller's graphics state rather
+// than from the font, so they cannot be defaulted away. OutlineStroker itself stays
+// internal.
+public enum LineCap
 {
     /// <summary>Square cut exactly at the endpoint — no extension.</summary>
     Butt,
@@ -14,7 +18,8 @@ internal enum LineCap
 }
 
 /// <summary>Join style between consecutive segments.</summary>
-internal enum LineJoin
+/// <remarks>Public for the same reason as <see cref="LineCap"/>.</remarks>
+public enum LineJoin
 {
     /// <summary>Extend the outer edges until they meet (capped by <c>miterLimit</c>).</summary>
     Miter,

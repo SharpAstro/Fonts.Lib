@@ -34,6 +34,35 @@ hinting, variation, and CJK baseline suites.
 | WOFF1 | Zlib-compressed SFNT |
 | WOFF2 | Brotli + glyf/loca transform reconstruction |
 | PostScript Type 1 (`.pfb`) | PFB binary container, eexec decryption |
+| AutoCAD SHX (`.shx`) | `unifont` (keyed by code point) and `bigfont` (double-byte CJK). See below |
+
+### AutoCAD SHX
+
+The format DWG text styles use, and the reason SHX text in a plotted PDF arrives
+as bare path geometry with no font object and no `/ToUnicode` behind it — which
+makes it invisible to every text extractor. `ShxFont` is deliberately separate
+from `OpenTypeFont`: it shares no tables, no `cmap` and no SFNT structure.
+
+The one thing that behaves unlike every other format here: **SHX is stroked, not
+filled**. A glyph is a pen path whose width comes from the graphics state (the
+`w` operator in PDF), never from the font, and there is no filled counter — the
+bowl of an `O` is a stroked circle, not two contours. So `TryGetGlyph` emits an
+**open** path and never calls `Close()`. Consumers wanting geometry (text
+extraction, shape matching, hit-testing) take it directly; consumers wanting
+something fillable go through `TryGetStrokedOutline` or `RenderGlyph` with a
+width of their choosing.
+
+Shape libraries (`AutoCAD-86 shapes` — `simplex.shx`, `ACAD.SHX`, P&ID and survey
+symbol sets) are **rejected** with `NotSupportedException`. They are not text
+fonts: their records are addressed by shape number from a DWG rather than by
+character code, so there is no character mapping to read.
+
+Validated against 4,428 stock and third-party `.shx` files: 470,156 glyphs decode
+without an exception, 99.0% of them producing geometry. That corpus cannot be
+bundled (Autodesk's faces are their IP; this repo is MIT end to end), so CI runs
+against two fixtures authored from scratch by `tools/make_shx_fixtures.py`. Point
+`SHX_TEST_FONT_DIR` at a local directory of `.shx` files to run the breadth suite
+in `ShxRealFaceTests`.
 
 ### OpenType tables
 

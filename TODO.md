@@ -63,6 +63,40 @@ Known approximations vs FreeType:
   is hinted. Feeding hinted outlines into `RenderSdf` is an open experiment
   (uncertain payoff — SDF undersamples tiny stems regardless).
 
+### AutoCAD SHX
+Both text layouts (`unifont`, `bigfont`) and the whole opcode set are
+implemented and validated against 4,428 real faces. The gaps are all at the
+edges, and two of them are inference rather than specification:
+
+- **`shapes` symbol libraries are not readable.** Rejected by header with
+  `NotSupportedException`. They are addressed by shape number from a DWG, so
+  supporting them means a different lookup API (`TryGetShape(int number)`), not
+  a different parser. Worth doing only if a caller needs symbol lookup — but
+  note they are the *majority* of `.shx` files in the wild (3,669 of 4,428 in
+  the survey), so the demand may well arrive.
+- **bigfont composed-subshape placement is inferred, not specified.** The
+  extended form (`0x07 0x00 hi lo base_x base_y width height`) is read as
+  "offset by (base_x, base_y), scale into a width x height box against
+  `above`", derived from corpus statistics — `height == above` dominates, with
+  `width` varying, i.e. full-height radicals of differing widths. Exact for
+  that dominant case; the non-square minority is plausible but unverified. The
+  parent pen is restored afterwards, which matches `base_x`/`base_y` being 0
+  in the plurality of cases but is likewise inferred.
+- **Clockwise fractional arcs (`0x0B` with the sign bit) are unverified.** The
+  offsets are taken as signed by the sweep direction, which is the reading that
+  makes `0x0B` degenerate exactly to `0x0A` when both offsets are zero. That
+  constraint pins the counterclockwise case down completely; nothing in the
+  corpus isolates the clockwise one.
+- **Codes are opaque for bigfont.** Lead-byte ranges identify the encoding
+  *family* (`0x81-0x9F, 0xE0-0xEA, 0xFD-0xFE` is Shift-JIS shaped, `0x80-0xFF`
+  is Big5/GBK shaped) but never the codepage, so mapping a bigfont code to
+  Unicode is left to the caller. A bundled codepage-guessing heuristic would be
+  a separate feature.
+- **No `0x0E` vertical-form rendering path beyond the interpreter.**
+  `ShxTextOrientation.Vertical` runs the right commands, but there is no
+  vertical layout support — no equivalent of `vmtx`/`VORG` — because SHX states
+  none.
+
 ## Shaping (`SharpAstro.Fonts.Shaping`)
 
 The separate pure-managed shaping engine — a distinct NuGet package layered

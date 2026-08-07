@@ -37,7 +37,33 @@ internal static class Fixtures
     /// <summary>NotoSansTC-Regular.otf — CJK CFF/OTF with cmap format 14 (IVS). SIL OFL 1.1.</summary>
     public const string NotoSansTC = "NotoSansTC-Regular.otf";
 
-    /// <summary>All bundled fixture fonts. Useful for "applies-to-every-font" smoke tests.</summary>
+    /// <summary>AutoCAD SHX <c>unifont</c> fixture — 7 glyphs (<c>I L A O Z T -</c>), authored from
+    /// scratch by <c>tools/make_shx_fixtures.py</c>. Autodesk's stock faces are their IP and cannot
+    /// be bundled, so these are our own bytes in their format; synthetic is also the stronger
+    /// fixture, since every opcode is present deliberately and the geometry is known exactly.
+    /// <para><c>O</c> is a full circle from four octant arcs (<c>0x0A</c>) — a decoder that skips
+    /// arcs returns an empty glyph, and <c>txt.shx</c> cannot catch that because it contains no
+    /// arcs at all. <c>I</c> has zero width and <c>-</c> zero height (the normalisation traps).
+    /// <c>Z</c> carries a non-empty glyph name plus a vertical-mode command that must be skipped
+    /// in horizontal text. <c>T</c> pulls <c>I</c> in by subshape reference (<c>0x07</c>) at code
+    /// <c>0x0049</c>, whose operand is big-endian — read the other way it resolves to nothing and
+    /// only the crossbar survives.</para></summary>
+    public const string ShxTestUnifont = "SharpAstroTest-unifont.shx";
+
+    /// <summary>AutoCAD SHX <c>bigfont</c> fixture — 3 double-byte glyphs at <c>0x8141</c>,
+    /// <c>0x8142</c> and <c>0x8143</c>, one lead-byte range <c>0x81-0x81</c>. Authored from
+    /// scratch; see <see cref="ShxTestUnifont"/> for why.
+    /// <para>bigfont is a genuinely different container from unifont, not just a different header:
+    /// records are reached through an index table of <c>(code, length, uint32 offset)</c> entries
+    /// pointing into a contiguous data area, where unifont stores them inline. Reading one with the
+    /// other's layout overruns EOF. <c>0x8143</c> composes <c>0x8142</c> through the extended
+    /// subshape form (<c>0x07 0x00</c> plus a placement box), which is how CJK glyphs are built
+    /// from radicals and which a plain 1-byte reading of <c>0x07</c> desynchronises.</para></summary>
+    public const string ShxTestBigfont = "SharpAstroTest-bigfont.shx";
+
+    /// <summary>All bundled fixture fonts. Useful for "applies-to-every-font" smoke tests.
+    /// Excludes the SHX fixtures — those are not SFNT and do not load through
+    /// <c>OpenTypeFont</c>.</summary>
     public static readonly string[] All =
     [
         XXTIIT_Arial_Subset, Tahoma_Subset, ISOCPEUR_Subset, D011A_Subset, Merida,
