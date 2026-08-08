@@ -1,0 +1,287 @@
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<header>
+    <h1>SharpAstro.Fonts <span class="vs">vs</span> your browser</h1>
+    <p class="sub">Same font file, same string, same pixel size. The browser's rasterizer above,
+       ours — running as WebAssembly in this tab — below.</p>
+</header>
+
+<div class="controls">
+    <label>Font
+        <select @onchange="OnFontChanged">
+            @foreach (var f in Faces)
+            {
+                <option value="@f.File" selected="@(f.File == _selected)">@f.Label</option>
+            }
+        </select>
+    </label>
+
+    <label class="grow">Text
+        <input value="@_text" @oninput="OnTextInput" />
+    </label>
+
+    <label>Size <span class="num">@_size px</span>
+        <input type="range" min="8" max="160" step="1" value="@_size" @oninput="OnSizeInput" />
+    </label>
+
+    <label class="check" title="TrueType bytecode hinting. Known-divergent — see TODO.md. No effect on CFF faces.">
+        <input type="checkbox" checked="@_hinted" @onchange="OnHintChanged" /> hinted <span class="beta">?</span>
+    </label>
+</div>
+
+@if (_status is not null)
+{
+    <p class="status">@_status</p>
+}
+
+@if (_hinted)
+{
+    <p class="warn">
+        <strong>Hinting is unverified against a reference implementation.</strong> The three
+        defects this demo originally surfaced — deformed Arabic letterforms, Noto Sans
+        <code>t</code> collapsing to a sliver at 87/90/91&nbsp;px, and <code>g</code>/<code>x</code>
+        running a hint program that never terminated — are fixed. What is still missing is a
+        FreeType conformance oracle, so subtler differences below may be our bugs rather than
+        grid-fitting. It has no effect at all on CFF faces (Noto Sans JP).
+    </p>
+}
+
+@if (_result is { NotdefCount: > 0 })
+{
+    <p class="warn">
+        <strong>@_result.NotdefCount of @_result.GlyphCount characters are missing from this
+        font</strong> — we draw .notdef (tofu), which is what a single font on its own can do.
+        Your browser silently substitutes a <em>different</em> font for them, so the panes below
+        are not showing the same typeface and the advance comparison is meaningless.
+    </p>
+}
+
+<section class="pane">
+    <h2>Browser <small>@_engine</small></h2>
+    <div class="render browser" @ref="_browserPane"
+         style="font-family:'@_family'; font-size:@(_size)px; line-height:@(_result?.Height ?? 0)px;">@_text</div>
+</section>
+
+<section class="pane">
+    <h2>SharpAstro.Fonts <small>@(_hinted ? "hinted" : "unhinted") · WASM</small></h2>
+    <div class="render"><canvas @ref="_canvas"></canvas></div>
+</section>
+
+@if (_result is not null)
+{
+    <table class="stats">
+        <tr><th>glyphs</th><td>@_result.GlyphCount</td></tr>
+        <tr><th>shape</th><td>@_result.ShapeMs.ToString("F3") ms</td></tr>
+        <tr><th>rasterize</th><td>@_result.RasterMs.ToString("F3") ms</td></tr>
+        <tr>
+            <th>advance</th>
+            <td>
+                ours @((_result.Width - 16).ToString("F0")) px
+                · browser @_browserWidth.ToString("F1") px
+                <span class="delta">Δ @((_result.Width - 16 - _browserWidth).ToString("F1")) px</span>
+            </td>
+        </tr>
+    </table>
+}
+
+@code {
+    /// <param name="Sample">Text this face can actually render. Carrying one per font is not a
+    /// nicety: the shared Latin string produced 15 tofu boxes in Noto Sans Arabic, and since the
+    /// browser quietly substitutes another font for missing glyphs, the two panes ended up showing
+    /// different typefaces while the page reported an advance belonging to neither.</param>
+    private sealed record Face(string Label, string File, string Sample);
+
+    private const string LatinSample = "Hamburgefonstiv 123";
+
+    // All SIL OFL 1.1 — a public site redistributes whatever it serves, so the commercial
+    // fixtures in tests/ (Arial, Tahoma, Lithos, ISOCPEUR subsets) deliberately stay out.
+    private static readonly Face[] Faces =
+    [
+        new("Noto Sans", "NotoSans-Regular.ttf", LatinSample),
+        // Arabic joining + RTL — the one sample that exercises ArabicShaper rather than
+        // DefaultShaper, and the reason shaping is in this demo at all.
+        new("Noto Sans Arabic", "NotoSansArabic-Regular.ttf", "مرحبا بالعالم"),
+        new("Source Sans 3", "SourceSans3-Regular.otf", LatinSample),
+        // DejaVu's selling point is breadth, so show some of it.
+        new("DejaVu Sans", "DejaVuSans.ttf", "Hamburgefonstiv — Ж Д Я α β γ"),
+        new("Roboto Flex", "RobotoFlex.ttf", LatinSample),
+        // Thai leans hard on GPOS mark positioning: "ที่" stacks a vowel above the base and a tone
+        // mark above THAT, which needs mark-to-base and mark-to-mark. We have no Thai-specific
+        // shaper (HarfBuzz does), so this is the honest test of how far DefaultShaper + GPOS gets.
+        new("Noto Sans Thai", "NotoSansThai-Regular.ttf", "สวัสดี ที่นี่ ๑๒๓"),
+        // CJK, and the only CFF-outlined face here — a different outline path from every other
+        // entry, which all use glyf. 4.4 MB, but fonts are fetched on selection rather than
+        // bundled into the WASM, so nobody pays for this one unless they pick it.
+        // Note the 'hinted' box is inert here: TrueType bytecode hinting does not apply to CFF.
+        new("Noto Sans JP (CJK)", "NotoSansJP-Regular.otf", "東京 こんにちは 日本語 123"),
+    ];
+
+    private static Face FaceOf(string file) =>
+        Array.Find(Faces, f => f.File == file) ?? Faces[0];
+
+    /// <summary>True if the box holds one of the built-in samples — ANY of them, not just the
+    /// outgoing face's. Testing only the outgoing face assumed <c>_text</c> and <c>_selected</c>
+    /// always agree, which a refresh is enough to break: you end up on one face holding another's
+    /// sample, the equality fails, and switching fonts silently keeps text the new face cannot
+    /// render. "Is this still untouched demo text?" is the question actually being asked.</summary>
+    private static bool IsBuiltInSample(string text) =>
+        Array.Exists(Faces, f => string.Equals(text, f.Sample, StringComparison.Ordinal));
+
+    private ElementReference _canvas;
+    private ElementReference _browserPane;
+    private OpenTypeFont? _font;
+    private SharpAstro.Fonts.Shaping.ShapingFont? _shaping;
+
+    private string _selected = Faces[0].File;
+    private string _family = "cmp";
+    private string _text = Faces[0].Sample;
+    private float _size = 64;
+    private bool _hinted;
+    private int _bench = 1;
+    private string? _status = "loading…";
+    private string _engine = "";
+
+    private RenderedRun? _result;
+    private double _browserWidth;
+    private bool _pendingDraw;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ApplyQueryString();
+
+        _engine = await JS.InvokeAsync<string>("fontsCompare.engine");
+        _engine = _engine.Contains("Firefox", StringComparison.Ordinal) ? "Gecko"
+            : _engine.Contains("Edg", StringComparison.Ordinal) ? "Blink (Edge)"
+            : _engine.Contains("Chrome", StringComparison.Ordinal) ? "Blink"
+            : "WebKit";
+        await LoadFontAsync(_selected);
+    }
+
+    /// <summary>Makes every state in the page a shareable URL — and, just as usefully, lets a
+    /// headless browser screenshot any font/string/size combination without clicking anything.
+    /// <c>?font=NotoSansArabic-Regular.ttf&amp;text=...&amp;size=96&amp;hinted=1</c></summary>
+    private void ApplyQueryString()
+    {
+        var query = new Uri(Nav.Uri).Query;
+        if (query.Length <= 1) return;
+
+        var explicitText = false;
+
+        foreach (var pair in query[1..].Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = pair.IndexOf('=', StringComparison.Ordinal);
+            if (eq <= 0) continue;
+
+            var key = Uri.UnescapeDataString(pair[..eq]);
+            var value = Uri.UnescapeDataString(pair[(eq + 1)..].Replace('+', ' '));
+
+            switch (key)
+            {
+                case "font":
+                    if (Array.Exists(Faces, f => f.File == value)) _selected = value;
+                    break;
+                case "text":
+                    _text = value;
+                    explicitText = true;
+                    break;
+                case "size":
+                    if (float.TryParse(value, out var s)) _size = Math.Clamp(s, 8, 160);
+                    break;
+                case "hinted":
+                    _hinted = value is "1" or "true";
+                    break;
+                case "bench":
+                    if (int.TryParse(value, out var n)) _bench = Math.Clamp(n, 1, 200);
+                    break;
+            }
+        }
+
+        // ?font=… on its own should land on that face's own sample, not the Latin default —
+        // otherwise a shared link to the Arabic or CJK face opens full of tofu.
+        if (!explicitText) _text = FaceOf(_selected).Sample;
+    }
+
+    private async Task LoadFontAsync(string file)
+    {
+        _status = $"fetching {file}…";
+        StateHasChanged();
+
+        var bytes = await Http.GetByteArrayAsync($"fonts/{file}");
+
+        _font = OpenTypeFont.Load(bytes);
+        _shaping = SharpAstro.Fonts.Shaping.ShapingFont.Create(_font);
+        _family = "cmp-" + file.Replace('.', '-');
+
+        // Same byte[] to the browser, so neither half can be showing a different file.
+        await JS.InvokeAsync<bool>("fontsCompare.registerFont", _family, bytes);
+
+        _status = null;
+        Rerender();
+    }
+
+    private void Rerender()
+    {
+        if (_font is null || _shaping is null || string.IsNullOrEmpty(_text)) return;
+
+        // Blazor WASM is single-threaded, so IJSRuntime is also an IJSInProcessRuntime — which is
+        // what lets a synchronous render call the browser clock at all.
+        var js = (IJSInProcessRuntime)JS;
+        var clock = () => js.Invoke<double>("fontsCompare.now");
+
+        // A single cold render is dominated by one-off costs — the shaper's UCD tables initialize
+        // lazily on first use, which is why an AOT build can look SLOWER than the interpreter if
+        // you only ever measure once. ?bench=N re-runs and keeps the fastest, i.e. steady state.
+        var best = GlyphRunRenderer.Render(_font, _shaping, _text, _size, _hinted, clock);
+        for (var i = 1; i < _bench; i++)
+        {
+            var run = GlyphRunRenderer.Render(_font, _shaping, _text, _size, _hinted, clock);
+            if (run.ShapeMs + run.RasterMs < best.ShapeMs + best.RasterMs) best = run;
+        }
+
+        _result = best;
+        _pendingDraw = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_pendingDraw || _result is null) return;
+        _pendingDraw = false;
+
+        await JS.InvokeVoidAsync("fontsCompare.draw", _canvas, _result.Width, _result.Height, _result.Rgba);
+        _browserWidth = await JS.InvokeAsync<double>("fontsCompare.measureElement", _browserPane);
+        StateHasChanged();
+    }
+
+    private async Task OnFontChanged(ChangeEventArgs e)
+    {
+        _selected = e.Value?.ToString() ?? Faces[0].File;
+
+        // Swap in the new face's sample if the box holds any built-in sample, i.e. nobody has
+        // typed anything. Text the user wrote survives switching fonts — including deliberately
+        // feeding a face text it cannot render, which is a fair thing to want to look at now that
+        // the page says plainly when that is happening.
+        if (IsBuiltInSample(_text))
+            _text = FaceOf(_selected).Sample;
+
+        await LoadFontAsync(_selected);
+    }
+
+    private void OnTextInput(ChangeEventArgs e)
+    {
+        _text = e.Value?.ToString() ?? "";
+        Rerender();
+    }
+
+    private void OnSizeInput(ChangeEventArgs e)
+    {
+        if (float.TryParse(e.Value?.ToString(), out var v)) { _size = v; Rerender(); }
+    }
+
+    private void OnHintChanged(ChangeEventArgs e)
+    {
+        _hinted = e.Value is bool b && b;
+        Rerender();
+    }
+}

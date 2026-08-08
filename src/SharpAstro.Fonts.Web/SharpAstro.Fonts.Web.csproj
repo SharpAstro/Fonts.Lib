@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <RootNamespace>SharpAstro.Fonts.Web</RootNamespace>
+    <!-- A demo site, not a shipped package.
+         OUTSIDE SharpAstro.Fonts.slnx: a build here links WASM through emscripten (~25 s cold), and
+         nothing in the shipped libraries depends on it, so sweeping it into every root `dotnet
+         build` / `dotnet test` would tax every unrelated change. Build it explicitly.
+         INSIDE the repo's Central Package Management, which does NOT follow from the above and is
+         the part tianwen got wrong: both its web projects opted out of CPM as though solution
+         membership implied it. CPM resolves by walking directories and has no bearing on which
+         projects a solution sweeps. All the opt-out bought was pins drifting unseen — WebGl.Renderer
+         two minors behind, Test.Sdk 18.6.0 against a central 18.3.0. -->
+    <IsPackable>false</IsPackable>
+    <!-- No culture data needed; drops ICU from the payload. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- .NET 9+ fingerprints _framework assets on publish, so index.html must carry the
+         placeholder markers or the PUBLISHED page 404s (only fingerprinted names exist there).
+         The dev server tolerates plain names, so without this the failure only ever shows up on
+         deploy. -->
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpAstro.Fonts\SharpAstro.Fonts.csproj" />
+    <ProjectReference Include="..\SharpAstro.Fonts.Shaping\SharpAstro.Fonts.Shaping.csproj" />
+  </ItemGroup>
+
+</Project>

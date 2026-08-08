@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SharpAstro.Fonts vs your browser</title>
+    <base href="/" />
+    <link rel="preload" id="webassembly" />
+    <script type="importmap"></script>
+    <style>
+        :root { color-scheme: light dark; --line: #d0d3d8; --dim: #6b7280; }
+        body {
+            margin: 0; padding: 2rem clamp(1rem, 4vw, 4rem);
+            font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+            background: Canvas; color: CanvasText;
+        }
+        h1 { font-size: 1.5rem; margin: 0 0 .25rem; font-weight: 650; }
+        .vs { color: var(--dim); font-weight: 400; }
+        .sub { margin: 0 0 1.5rem; color: var(--dim); max-width: 60ch; }
+
+        .controls {
+            display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; align-items: end;
+            padding-bottom: 1.25rem; border-bottom: 1px solid var(--line); margin-bottom: 1.5rem;
+        }
+        .controls label { display: flex; flex-direction: column; gap: .35rem; font-size: .8rem; color: var(--dim); }
+        .controls label.grow { flex: 1 1 22rem; }
+        .controls label.check { flex-direction: row; align-items: center; gap: .4rem; }
+        .controls input[type=text], .controls input:not([type]) , .controls select {
+            font: inherit; padding: .4rem .5rem; border: 1px solid var(--line); border-radius: 6px;
+            background: Canvas; color: CanvasText;
+        }
+        .controls input[type=range] { width: 14rem; }
+        .num { color: CanvasText; font-variant-numeric: tabular-nums; }
+
+        /* The two panes sit directly against each other: comparing rasterizers by eye is much
+           easier when the glyphs are adjacent than when a heading pushes them apart. */
+        .pane { margin-bottom: .5rem; }
+        .pane h2 {
+            font-size: .75rem; text-transform: uppercase; letter-spacing: .06em;
+            color: var(--dim); font-weight: 600; margin: 0 0 .4rem;
+        }
+        .pane h2 small { text-transform: none; letter-spacing: 0; font-weight: 400; opacity: .8; }
+        .render {
+            border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+            overflow-x: auto; background: #fff;
+        }
+        /* Our canvas paints its own white ground, so the browser half must match it exactly —
+           otherwise the two halves differ by background alone and the comparison is worthless.
+           text-indent absorbs the canvas's own 8px internal margin (GlyphRunRenderer.Padding, which
+           is there to catch negative left bearings) so both runs start at the same x and the eye
+           can track a glyph straight down between the panes.
+           line-height is set inline per render to the canvas's exact pixel height: it keeps the two
+           boxes the same size AND stops the glyphs overflowing the line box, which was making
+           overflow-x:auto compute overflow-y to auto and grow a stray vertical scrollbar. */
+        .render.browser {
+            /* padding-left is 8 (the box's own) + 8 (the canvas's internal Padding) so both runs
+               start at the same x. Done with padding rather than text-indent so a Range over the
+               text measures the text alone. */
+            color: #000; white-space: pre; padding: 0 8px 0 16px;
+            /* Like-for-like, and each of these was actively lying before:
+               - optical-sizing defaults to AUTO, so the browser drove Roboto Flex's opsz axis to
+                 the font size (109) instead of its default (14) and rendered a visibly different,
+                 25%-narrower instance of the font than the one we render.
+               - variation-settings normal pins every other axis to its fvar default.
+               - synthesis none stops the browser faking bold/italic from a regular face. */
+            font-optical-sizing: none;
+            font-variation-settings: normal;
+            font-synthesis: none;
+        }
+        canvas { display: block; }
+
+        .stats { border-collapse: collapse; font-size: .8rem; }
+        .stats th { text-align: left; color: var(--dim); font-weight: 500; padding: .15rem 1rem .15rem 0; }
+        .stats td { font-variant-numeric: tabular-nums; padding: .15rem 0; }
+        .delta { color: var(--dim); }
+        .status { color: var(--dim); font-size: .85rem; }
+        .warn {
+            border-left: 3px solid #d97706; padding: .6rem .8rem; margin: 0 0 1rem;
+            background: color-mix(in srgb, #d97706 12%, transparent); font-size: .85rem;
+            max-width: 90ch; border-radius: 0 4px 4px 0;
+        }
+        #app > .boot { color: var(--dim); }
+    </style>
+</head>
+<body>
+    <div id="app"><p class="boot">Starting .NET WebAssembly…</p></div>
+
+    <div id="blazor-error-ui" style="display:none; position:fixed; bottom:0; left:0; right:0; padding:.8rem 1rem; background:#b91c1c; color:#fff;">
+        Something went wrong. <a href="" class="reload" style="color:#fff;">Reload</a>
+    </div>
+
+    <script src="app.js"></script>
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
+</body>
+</html>
