@@ -88,5 +88,13 @@ public class HbConformanceTests
         var markCases = cases.Where(c => c.Glyphs.Count >= 2
             && c.Glyphs.Skip(1).Any(g => g.XOffset != 0 || g.YOffset != 0)).ToList();
         markCases.Count.ShouldBeGreaterThan(0, "expected base+mark fixtures with real GPOS offsets");
+
+        // RTL *and* mark attachment in the same case. Neither alone catches a wrong-direction
+        // attachment propagation: the Latin mark cases are all LTR, and the DejaVu Arabic and
+        // Hebrew cases are pure joining/reversal with no marks to attach. That combination being
+        // absent is exactly how RTL mark propagation stayed unimplemented after RTL landed, with
+        // Arabic dots sitting a whole base-glyph advance away from where HarfBuzz puts them.
+        markCases.Any(c => c.Rtl).ShouldBeTrue(
+            "no RTL fixture exercises mark attachment — restore one before trusting Arabic marks");
     }
 }

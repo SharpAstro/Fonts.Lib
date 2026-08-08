@@ -156,6 +156,17 @@ algorithm with bidi-aware script itemization. Scripts that need no glyph
 reordering shape correctly today: Latin, Greek, Cyrillic, CJK, Arabic,
 Hebrew.
 
+Conformance against real HarfBuzz (`HbConformanceTests`) is exact — glyph ids,
+clusters, advances and offsets — on every checked-in fixture, which now includes
+a real Arabic face rather than only DejaVu's minimal `arab` coverage. Adding it
+found that RTL mark-attachment propagation had never been implemented: the pass
+applied the forward rule in both directions, putting every attached mark out by
+the base glyph's full advance. Nothing caught it because no fixture combined RTL
+*with* mark attachment — the Latin mark cases are LTR, and DejaVu's Arabic and
+Hebrew cases are pure joining and reversal with no marks to attach. When adding
+a script, add a fixture that crosses it with the features it will actually use;
+a feature matrix with an empty cell is where these live.
+
 The limitations below live here (rather than scattered across the `.csproj`
 description and XML-doc comments where they used to) so "what's left" is
 answerable from the repo.
