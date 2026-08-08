@@ -7,6 +7,30 @@ on:
     branches: [ main ]
 
 env:
+  # Minor bump 1.9 -> 1.10: hinting and RTL mark-attachment fixes, plus one additive API.
+  #   * THREE compounding TrueType interpreter defects, each masking the next. Zone's
+  #     constructor never set PointCount, so the twilight zone -- which nothing else ever
+  #     sizes, unlike the glyph zone -- reported 0 points forever and every twilight
+  #     operation was a silent no-op. ExecAlignRp's out-of-range-rp0 guard returned WITHOUT
+  #     popping its operands; fonts drive ALIGNRP from a LOOPCALL'd helper, so the surplus
+  #     accumulated until the enclosing "call until the stack drains" loop could never reach
+  #     its exit depth, which is what hung 'g' and 'x' outright. And 'cvt ' was read as
+  #     ushort when FWORD is SIGNED int16, turning 26 of NotoSans-Regular's 150 control
+  #     values into huge positives -- hidden entirely by the dead twilight zone, and invisible
+  #     in DejaVuSans, which has no negative entries at all. Fixing any one alone made things
+  #     WORSE (24 and 139 newly malformed glyphs respectively); all three give 0 of 1580
+  #     glyph-size pairs out of proportion, down from 139 with the worst 80x too tall. Also
+  #     fixed alongside: the FDEF/IDEF skip scanned raw bytes for ENDF (0x2D = 45, a perfectly
+  #     ordinary push operand) instead of stepping whole instructions.
+  #   * GPOS mark-attachment offsets propagate the RTL way in RTL runs. Only HarfBuzz's
+  #     forward branch was implemented and it was applied in both directions, so every
+  #     attached mark in Arabic sat exactly one base-glyph advance from where it belongs.
+  #   * Additive API: NameId.License / NameId.LicenseUrl (name IDs 13/14) and the matching
+  #     NameTable.License / .LicenseUrl. The parser already retained every name ID; this
+  #     names what was already reachable, so a caller can read a face's own licensing terms.
+  # Behaviour changes for any TrueType face whose hint programs touch the twilight zone or a
+  # negative control value, and for RTL text with marks -- in every case from wrong to right.
+  #
   # Minor bump 1.7 -> 1.8: PDF subset fonts that used to be rejected outright now load,
   # and glyphs can be selected by PostScript name. Two independent fixes, both driven by
   # real PDF-embedded subsets:
