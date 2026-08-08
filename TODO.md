@@ -91,14 +91,17 @@ Known approximations vs FreeType:
   - Still worth doing, and now unblocked rather than urgent: the FreeType
     conformance oracle above. These three were found by reading a trace, which
     works for catastrophic breakage and not for subtle mis-hinting.
-- **Arabic letterform deformation — fixed in principle, unconfirmed by eye.**
+- **Arabic letterform deformation — fixed, confirmed by eye.**
   NotoSansArabic-Regular carried 4 corrupted control values, so the CVT defect
-  demonstrably applied to it; it no longer trips any proportion or budget check.
-  But the original report was visual (interior strokes displaced while bounding
-  boxes stayed byte-identical), and no self-comparison metric can settle it —
-  hinted-vs-unhinted pixel divergence at 24ppem is indistinguishable from
-  legitimate grid-fitting. Confirming it means putting it beside the browser
-  again in the web demo. Until someone does, treat this one as untested.
+  demonstrably applied to it. No self-comparison metric could settle whether the
+  fix was enough — the original report was visual (interior strokes displaced
+  while bounding boxes stayed byte-identical), and hinted-vs-unhinted pixel
+  divergence at 24ppem is indistinguishable from legitimate grid-fitting. So it
+  was settled the only way it could be: `tools/shot.mjs` driving the published
+  demo to hinted `مرحبا بالعالم`, at 64px and again at 24px magnified 3x, with
+  the browser rendering the same file directly above. Letterforms, joins and dot
+  placement all track the browser; advance agrees to 0.4-0.6px. What remains open
+  is the FreeType oracle above, for differences too subtle to see.
 - **Hinting does not reach the SDF render path.** `RenderSdf` builds the
   distance field from the UNHINTED outline (`DrawGlyph`), and consumers
   that render text as SDF (e.g. the pdf-viewer, `SdfTextThreshold = 0`)

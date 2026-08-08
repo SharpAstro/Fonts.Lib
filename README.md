@@ -3,12 +3,16 @@
 A pure-managed, MIT-licensed C# library for loading and rendering OpenType /
 TrueType fonts.
 
+**[Try it in your browser →](https://sharpastro.github.io/Fonts.Lib/)** — the same
+font file, string and pixel size rendered by this library (compiled to WebAssembly)
+and by your browser, one above the other. Source: `src/SharpAstro.Fonts.Web`.
+
 ## Status
 
 **All phases complete.** TrueType hinting, CFF outlines, COLR v0/v1 color
 glyphs, bitmap emoji, variable fonts, PostScript Type 1, WOFF/WOFF2, and
-CJK variation selectors. 155 tests passing across outline, rasterizer, color,
-hinting, variation, and CJK baseline suites.
+CJK variation selectors. 594 tests passing across outline, rasterizer, color,
+hinting, variation, CJK baseline, and shaping-conformance suites.
 
 ## Goals
 
