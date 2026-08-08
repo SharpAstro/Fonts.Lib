@@ -1,0 +1,105 @@
+name: pages
+
+# Deploy the SharpAstro.Fonts.Web comparison demo to https://sharpastro.github.io/Fonts.Lib/.
+#
+# The demo renders a string with this library beside the browser's own rendering of the same font
+# file, which is how two of the defects in PR #21 were noticed at all. It is a fully static site:
+# fonts are same-origin assets under wwwroot/fonts/, fetched on demand, and there is no server.
+#
+# The project sits OUTSIDE SharpAstro.Fonts.slnx (a WASM link is ~25 s cold and nothing shipped
+# depends on it), so dotnet.yml never builds it and this workflow is its ONLY CI. It IS under the
+# repo's Central Package Management despite that — CPM resolves by walking directories, so
+# solution membership never had any bearing on it, and the two get conflated: both of tianwen's
+# web projects opted out of CPM as though membership implied it and their pins drifted unseen.
+#
+# NOTE: Pages must be enabled once with build type "workflow" (Settings -> Pages -> Source:
+# "GitHub Actions", or `gh api -X POST repos/{owner}/{repo}/pages -f build_type=workflow`).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # The demo links the two libraries in, so a rasterizer or shaper change is a site change —
+      # that is the point of the site. Publishing on those paths too keeps what is deployed
+      # honest about what is on main.
+      - 'src/SharpAstro.Fonts.Web/**'
+      - 'src/SharpAstro.Fonts/**'
+      - 'src/SharpAstro.Fonts.Shaping/**'
+      - 'Directory.Packages.props'
+      - 'Directory.Build.props'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; let an in-flight deploy finish rather than cancelling it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # AOT compilation and the Release native relink both need the Emscripten/LLVM toolchain.
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      # AOT is worth its download here, but not by the margin the usual hand-wave implies, so the
+      # measured numbers rather than the assumption (Noto Sans, "Hamburgefonstiv 123", 19 glyphs,
+      # 3 runs each, headless Chromium on win-arm64):
+      #   rasterize  61/58/55 ms interpreted -> 22/19/19 ms AOT   (~3x; 17 -> 7 ms on a re-render)
+      #   shape      14-16 ms interpreted   -> 28-34 ms AOT       (AOT is SLOWER here)
+      #   payload    1.5 MB brotli          -> 3.7 MB brotli
+      # Shaping is one-time table-and-lookup setup, where AOT's larger code costs more than its
+      # speed returns; rasterizing is the tight interpreter-and-scanline loop AOT exists for. The
+      # slider re-rasterizes per frame while dragged, which is where visitors spend their time on
+      # this page, so the hot loop wins the argument. Revisit if the payload ever matters more.
+      # UseLocalSharpAstroPng is belt-and-braces: it self-enables from Exists() on a sibling
+      # Codecs clone, which a runner does not have, but stating it keeps the build reproducible
+      # if that ever changes.
+      - name: Publish SharpAstro.Fonts.Web (Release, AOT)
+        run: >
+          dotnet publish src/SharpAstro.Fonts.Web/SharpAstro.Fonts.Web.csproj
+          -c Release -o publish -p:UseLocalSharpAstroPng=false -p:RunAOTCompilation=true --nologo
+
+      - name: Rewrite base href for the /Fonts.Lib/ project-site subpath
+        run: |
+          set -euo pipefail
+          idx="publish/wwwroot/index.html"
+          # github.io serves this project site under /Fonts.Lib/, not root. Everything the app
+          # fetches is relative (HttpClient.BaseAddress comes from HostEnvironment.BaseAddress,
+          # which is this element), so the one rewrite covers the font assets too. Local dev
+          # keeps <base href="/" />; patch only the published copy.
+          sed -i 's|<base href="/" />|<base href="/Fonts.Lib/" />|' "$idx"
+          grep -q '<base href="/Fonts.Lib/" />' "$idx" || { echo "::error::base href not rewritten"; exit 1; }
+
+      - name: Disable Jekyll
+        # Jekyll drops directories whose name starts with an underscore, which is the whole of
+        # _framework — the runtime, the assemblies, everything. No 404.html fallback alongside
+        # this: the app mounts one component on #app with no Router, so no client-side route
+        # exists that a static host could 404 on.
+        run: touch publish/wwwroot/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish/wwwroot
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
