@@ -53,16 +53,18 @@ jobs:
       - name: Install wasm-tools workload
         run: dotnet workload install wasm-tools
 
-      # AOT is worth its download here, but not by the margin the usual hand-wave implies, so the
-      # measured numbers rather than the assumption (Noto Sans, "Hamburgefonstiv 123", 19 glyphs,
-      # 3 runs each, headless Chromium on win-arm64):
-      #   rasterize  61/58/55 ms interpreted -> 22/19/19 ms AOT   (~3x; 17 -> 7 ms on a re-render)
-      #   shape      14-16 ms interpreted   -> 28-34 ms AOT       (AOT is SLOWER here)
+      # AOT is the deploy recipe, not an optimisation. Measured through the page's own ?bench=20
+      # (renders N times, keeps the fastest = steady state), Noto Sans, "Hamburgefonstiv 123",
+      # 19 glyphs @96px, 3 runs each, headless Chromium on win-arm64:
+      #   rasterize  7.9-9.4 ms interpreted -> 1.8-1.9 ms AOT     (~4-5x)
+      #   shape      0.4-0.5 ms interpreted -> 0.1 ms AOT         (~4x)
       #   payload    1.5 MB brotli          -> 3.7 MB brotli
-      # Shaping is one-time table-and-lookup setup, where AOT's larger code costs more than its
-      # speed returns; rasterizing is the tight interpreter-and-scanline loop AOT exists for. The
-      # slider re-rasterizes per frame while dragged, which is where visitors spend their time on
-      # this page, so the hot loop wins the argument. Revisit if the payload ever matters more.
+      # MEASURE WITH ?bench=N, NOT A SINGLE RENDER. A first render is dominated by one-time setup
+      # -- the shaper's lazily-initialised UCD tables above all -- and measuring one made AOT look
+      # 2x SLOWER at shaping (14-16 ms -> 28-34 ms) and only 3x faster at rasterizing. Both are
+      # artefacts: AOT's larger code costs more to bring up, and that cost is paid once, off the
+      # end of every subsequent frame. The size slider re-rasterizes per frame while dragged, so
+      # steady state is the number that describes what a visitor feels.
       # UseLocalSharpAstroPng is belt-and-braces: it self-enables from Exists() on a sibling
       # Codecs clone, which a runner does not have, but stating it keeps the build reproducible
       # if that ever changes.

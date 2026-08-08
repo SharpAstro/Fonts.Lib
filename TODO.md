@@ -182,6 +182,17 @@ runs GSUB/GPOS but reorders nothing) and will misrender. Matches the
 package's own scope line ("Indic/USE out of scope") in
 `SharpAstro.Fonts.Shaping.csproj`.
 
+**Thai is the exception, and knowing why bounds the claim.** Checked against
+the browser in the web demo, modern Noto Sans Thai renders correctly with no
+Thai shaper at all: `ที่นี่` (mark-to-mark stacking), `น้ำ` (SARA AM), `เก้า`
+(leading vowel), `ป่า` (tone over an ascender). Two reasons, neither of which
+generalises. Thai leading vowels are already in visual order in Unicode, so
+there is nothing to reorder — unlike Indic. And the rest of the work is done
+*in the font*, via `ccmp` plus mark features; we run the full GSUB/GPOS
+pipeline, so we inherit it. HarfBuzz's Thai shaper exists mainly for **legacy**
+fonts that shape through the PUA, and those are untested here and are where
+divergence should be expected. Do not read "Thai works" as "Thai is supported".
+
 ### No Unicode normalizer
 The engine assumes **NFC input**: it reorders combining marks by canonical
 combining class but never composes or decomposes (`ShaperBase.cs`,
