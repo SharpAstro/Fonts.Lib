@@ -28,6 +28,10 @@ internal static class HintingPipeline
         if (!font.HasHinting) return null;
         if (ppem <= 0f) return HintedOutline.Empty;
 
+        // Already known not to terminate at this size — skip straight to the unhinted path
+        // instead of burning the budget again.
+        if (font.HintingBudgetFailures.ContainsKey((glyphId, ppem))) return null;
+
         var outline = font.LoadGlyphOutline(glyphId);
         if (outline.IsEmpty) return HintedOutline.Empty;
 
@@ -79,8 +83,23 @@ internal static class HintingPipeline
         if (instructions is { Length: > 0 })
         {
             interp.SetGlyphContours(ends);
-            interp.RunGlyphProgram(instructions, zone);
-            interp.SetGlyphContours(null);
+            interp.ResetInstructionBudget();
+            try
+            {
+                interp.RunGlyphProgram(instructions, zone);
+            }
+            catch (HintingBudgetExceededException)
+            {
+                // Non-terminating hint program. Give up on hinting this glyph rather than
+                // wedging the caller; null makes RenderGlyphHinted fall back to RenderGlyph.
+                // Remember the verdict so the next render of this glyph is free.
+                font.HintingBudgetFailures[(glyphId, ppem)] = true;
+                return null;
+            }
+            finally
+            {
+                interp.SetGlyphContours(null);
+            }
         }
 
         // Strip phantom points and copy back the visible contour points.
@@ -102,10 +121,24 @@ internal static class HintingPipeline
         if (font.HintingSnapshots.TryGetValue(ppem, out var cached))
             return cached;
 
-        var interp = font.CreateHintingInterpreter();
-        if (interp is null) return null;
-        interp.OnSizeChange(ppem, font.UnitsPerEm, font.Prep ?? []);
-        var snap = interp.TakeSnapshot();
+        HintingSnapshot snap;
+        try
+        {
+            // fpgm runs inside CreateHintingInterpreter, so it is covered by this guard too.
+            var interp = font.CreateHintingInterpreter();
+            if (interp is null) return null;
+
+            interp.ResetInstructionBudget();
+            interp.OnSizeChange(ppem, font.UnitsPerEm, font.Prep ?? []);
+            snap = interp.TakeSnapshot();
+        }
+        catch (HintingBudgetExceededException)
+        {
+            // A non-terminating prep (or fpgm, executed at interpreter construction) poisons every
+            // glyph at this size, not just one — so disable hinting for the whole face rather than
+            // re-running the same doomed program on the next glyph.
+            return null;
+        }
 
         // Race-safe: if another thread built one concurrently, either is fine.
         return font.HintingSnapshots.GetOrAdd(ppem, snap);

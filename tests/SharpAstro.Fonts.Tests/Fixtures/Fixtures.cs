@@ -36,6 +36,13 @@ internal static class Fixtures
     public const string NotoSansSC = "NotoSansSC-Regular.otf";
     /// <summary>NotoSansTC-Regular.otf — CJK CFF/OTF with cmap format 14 (IVS). SIL OFL 1.1.</summary>
     public const string NotoSansTC = "NotoSansTC-Regular.otf";
+    /// <summary>NotoSans-Regular.ttf (hinted build, SIL OFL 1.1) — the face that exposed the
+    /// three compounding hinting-interpreter defects (dead twilight zone, ALIGNRP not draining
+    /// its operands, <c>cvt </c> read unsigned). It is the only bundled face with negative
+    /// control values — 26 of 150 — which is precisely why DejaVuSans looked clean throughout
+    /// and this one hung the process on <c>g</c> and <c>x</c>. Keep it as the hinting regression
+    /// fixture; see <c>HintingCorrectnessTests</c>.</summary>
+    public const string NotoSans = "NotoSans-Regular.ttf";
 
     /// <summary>AutoCAD SHX <c>unifont</c> fixture — 7 glyphs (<c>I L A O Z T -</c>), authored from
     /// scratch by <c>tools/make_shx_fixtures.py</c>. Autodesk's stock faces are their IP and cannot
