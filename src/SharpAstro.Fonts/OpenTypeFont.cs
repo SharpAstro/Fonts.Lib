@@ -98,7 +98,7 @@ public sealed class OpenTypeFont
     internal ReadOnlySpan<float> NormalizedCoords => _normalizedCoords;
 
     /// <summary>'cvt ' Control Value Table (FUnit values used by hinting).</summary>
-    internal ushort[]? CvtFunits { get; }
+    internal short[]? CvtFunits { get; }
     /// <summary>'fpgm' Font Program — runs once at face load.</summary>
     internal byte[]? Fpgm { get; }
     /// <summary>'prep' CVT Program — runs each size change.</summary>
@@ -111,6 +111,14 @@ public sealed class OpenTypeFont
     /// Lock-free; concurrent readers get a consistent snapshot per ppem.</summary>
     internal readonly System.Collections.Concurrent.ConcurrentDictionary<float, Hinting.HintingSnapshot>
         HintingSnapshots = new();
+
+    /// <summary>(glyphId, ppem) pairs whose hint program blew the instruction budget. Without
+    /// this, a glyph with a non-terminating program re-burns the whole budget on every single
+    /// render: laying out "Handgloves quick brown fox" at 13ppem in NotoSans-Regular hits two
+    /// such glyphs three times, which measured 147 ms against 3.6 ms unhinted. Memoizing the
+    /// verdict makes it a one-off cost per glyph and size.</summary>
+    internal readonly System.Collections.Concurrent.ConcurrentDictionary<(uint GlyphId, float Ppem), bool>
+        HintingBudgetFailures = new();
 
     /// <summary>True if this font carries COLR + CPAL color glyph data.</summary>
     public bool HasColorGlyphs => Colr is not null && Cpal is not null;
@@ -162,7 +170,7 @@ public sealed class OpenTypeFont
         FvarTable? fvar, AvarTable? avar, GvarTable? gvar,
         HvarTable? hvar, MvarTable? mvar, VvarTable? vvar, CvarTable? cvar,
         KernTable? kern, GposTable? gpos,
-        ushort[]? cvtFunits, byte[]? fpgm, byte[]? prep,
+        short[]? cvtFunits, byte[]? fpgm, byte[]? prep,
         float[] normalizedCoords,
         VheaTable? vhea, VmtxTable? vmtx,
         Tables.OpenTypeMath.MathTable? math)
@@ -823,15 +831,18 @@ public sealed class OpenTypeFont
 
         var normCoords = fvar is not null ? new float[fvar.Axes.Length] : Array.Empty<float>();
 
-        ushort[]? cvtFunits = null;
+        short[]? cvtFunits = null;
         byte[]? fpgm = null;
         byte[]? prep = null;
         if (dir.TryGet(Tags.Cvt2, out var cvtRec))
         {
             var cvtBytes = cvtRec.Slice(span);
-            cvtFunits = new ushort[cvtBytes.Length / 2];
+            // 'cvt ' is an array of FWORD — *signed* int16. Read unsigned, a negative control
+            // value (26 of NotoSans-Regular's 150 entries) turns into a huge positive one, and
+            // since CVT values position twilight points the resulting outline is destroyed.
+            cvtFunits = new short[cvtBytes.Length / 2];
             for (var i = 0; i < cvtFunits.Length; i++)
-                cvtFunits[i] = (ushort)((cvtBytes[i * 2] << 8) | cvtBytes[i * 2 + 1]);
+                cvtFunits[i] = (short)((cvtBytes[i * 2] << 8) | cvtBytes[i * 2 + 1]);
         }
         if (dir.TryGet(Tags.Fpgm2, out var fpgmRec)) fpgm = fpgmRec.Slice(span).ToArray();
         if (dir.TryGet(Tags.Prep2, out var prepRec)) prep = prepRec.Slice(span).ToArray();

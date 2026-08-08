@@ -27,6 +27,11 @@ internal sealed class Zone
 
     public Zone(int capacity)
     {
+        // Every allocated slot is a usable point. This matters for the twilight zone, which
+        // nothing else ever sizes: the glyph zone gets its count set by HintingPipeline, but
+        // zone 0 is only ever constructed, so leaving PointCount at 0 here made every
+        // twilight bounds-check fail and silently turned the whole zone into a no-op.
+        PointCount = capacity;
         CurX = new int[capacity];
         CurY = new int[capacity];
         OrgX = new int[capacity];

@@ -55,7 +55,7 @@ internal sealed class Interpreter
     // ---- Storage / CVT --------------------------------------------------
     private int[] _storage;                // per face, persists across runs
     private int[] _cvt;                    // F26.6, scaled to current ppem
-    private ushort[]? _cvtFunits;          // raw FUnit values from 'cvt ' table (null in snapshot-cloned instances)
+    private short[]? _cvtFunits;          // raw FUnit values from 'cvt ' table (null in snapshot-cloned instances)
 
     // ---- Function table -------------------------------------------------
     private readonly Function[] _functions;
@@ -81,7 +81,7 @@ internal sealed class Interpreter
     /// that runs fpgm + prep to produce a <see cref="HintingSnapshot"/>.</summary>
     public Interpreter(ushort maxStackElements, ushort maxStorage,
         ushort maxFunctionDefs, ushort maxTwilightPoints,
-        ushort[] cvtFunits)
+        short[] cvtFunits)
     {
         _stack = new int[Math.Max(256, (int)maxStackElements)];
         _storage = new int[Math.Max(64, (int)maxStorage)];
@@ -182,6 +182,14 @@ internal sealed class Interpreter
         var end = start + length;
         while (ip < end)
         {
+            // A glyph's bytecode is untrusted input — in this library's main use case it arrives
+            // inside someone else's PDF — and the instruction set has unrestricted backward jumps
+            // (JMPR/JROT/JROF), so a program that never satisfies its own exit condition runs
+            // forever. Without this bound the whole process wedges: hinting NotoSans-Regular's
+            // 'g' and 'x' spins on an 11-instruction cycle in fpgm (see HintingBudgetTests).
+            // FreeType carries the same class of guard for the same reason.
+            if (++_instructions > InstructionBudget) throw new HintingBudgetExceededException();
+
             var op = code[ip++];
             var pop = PopPushCount.Pop(op);
             if (pop > _sp)
@@ -387,7 +395,13 @@ internal sealed class Interpreter
             {
                 var fid = Pop();
                 var bodyStart = ip;
-                while (ip < code.Length && code[ip] != (byte)Op.ENDF) ip++;
+                // Step whole instructions, not bytes: ENDF is 0x2D = 45, a perfectly ordinary
+                // push operand. A raw byte scan would stop inside a PUSHB/NPUSHW argument list,
+                // truncating the function and leaving ip mid-instruction so the rest of the
+                // program decodes as garbage. No bundled face happens to contain a 45 in push
+                // data, which is the only reason this has never bitten.
+                while (ip < code.Length && code[ip] != (byte)Op.ENDF)
+                    ip = SkipOperands(code, ip + 1, code[ip]);
                 if (!_inGlyphProgram && fid >= 0 && fid < _functions.Length)
                     _functions[fid] = new Function(code, bodyStart, ip - bodyStart);
                 ip++; // skip ENDF
@@ -398,7 +412,9 @@ internal sealed class Interpreter
                 // Instruction definition — overrides an unused opcode. Rare;
                 // skip body during glyph programs (same reason as FDEF).
                 Pop();
-                while (ip < code.Length && code[ip] != (byte)Op.ENDF) ip++;
+                // Instruction-wise, for the reason spelled out under FDEF above.
+                while (ip < code.Length && code[ip] != (byte)Op.ENDF)
+                    ip = SkipOperands(code, ip + 1, code[ip]);
                 ip++;
                 break;
             }
@@ -854,7 +870,10 @@ internal sealed class Interpreter
         var zp1 = GetZone(_gs.Zp1);
         var zp0 = GetZone(_gs.Zp0);
         if ((uint)p >= (uint)zp1.PointCount || (uint)_gs.Rp0 >= (uint)zp0.PointCount)
-        { if (setRp0) _gs.Rp0 = p; _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; return; }
+        // rp1 takes the OLD rp0, so it must be read before the optional rp0 = p. Reversed, rp1
+        // and rp0 both end up as p, and since IP/SHP/MDRP measure from rp1 the error propagates
+        // into later point positions. Matches the order used on the non-guard path below.
+        { _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; if (setRp0) _gs.Rp0 = p; return; }
 
         var orgDist = DualProject(zp1.OrgX[p] - zp0.OrgX[_gs.Rp0],
                                   zp1.OrgY[p] - zp0.OrgY[_gs.Rp0]);
@@ -903,7 +922,10 @@ internal sealed class Interpreter
         var cvtVal = ((uint)cvtIdx < (uint)_cvt.Length) ? _cvt[cvtIdx] : 0;
 
         if ((uint)p >= (uint)zp1.PointCount || (uint)_gs.Rp0 >= (uint)zp0.PointCount)
-        { if (setRp0) _gs.Rp0 = p; _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; return; }
+        // rp1 takes the OLD rp0, so it must be read before the optional rp0 = p. Reversed, rp1
+        // and rp0 both end up as p, and since IP/SHP/MDRP measure from rp1 the error propagates
+        // into later point positions. Matches the order used on the non-guard path below.
+        { _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; if (setRp0) _gs.Rp0 = p; return; }
 
         // Single-width cut-in on the CVT value.
         if (Math.Abs(cvtVal - _gs.SingleWidthValue) < _gs.SingleWidthCutIn)
@@ -955,7 +977,18 @@ internal sealed class Interpreter
         var loop = Math.Max(1, _gs.Loop);
         var zp0 = GetZone(_gs.Zp0);
         var zp1 = GetZone(_gs.Zp1);
-        if ((uint)_gs.Rp0 >= (uint)zp0.PointCount) { _gs.Loop = 1; return; }
+        if ((uint)_gs.Rp0 >= (uint)zp0.PointCount)
+        {
+            // Drain the operands even though rp0 is unusable. A guard may skip an
+            // instruction's *effect*, never its *stack effect* — the caller's stack discipline
+            // cannot depend on the data being valid. Returning early without popping left one
+            // extra entry per call, and since fonts drive ALIGNRP from a LOOPCALL'd helper the
+            // surplus accumulated until the enclosing "call until the stack drains" loop could
+            // never reach its exit depth. Matches ExecIp / ExecShp, which already drain here.
+            for (var i = 0; i < loop; i++) Pop();
+            _gs.Loop = 1;
+            return;
+        }
         for (var i = 0; i < loop; i++)
         {
             var p = Pop();
@@ -1139,7 +1172,10 @@ internal sealed class Interpreter
         var zp1 = GetZone(_gs.Zp1);
         var zp0 = GetZone(_gs.Zp0);
         if ((uint)p >= (uint)zp1.PointCount || (uint)_gs.Rp0 >= (uint)zp0.PointCount)
-        { if (setRp0) _gs.Rp0 = p; _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; return; }
+        // rp1 takes the OLD rp0, so it must be read before the optional rp0 = p. Reversed, rp1
+        // and rp0 both end up as p, and since IP/SHP/MDRP measure from rp1 the error propagates
+        // into later point positions. Matches the order used on the non-guard path below.
+        { _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; if (setRp0) _gs.Rp0 = p; return; }
 
         if (_gs.Zp1 == 0)
         {
@@ -1390,4 +1426,15 @@ internal sealed class Interpreter
 
     /// <summary>Set by <see cref="HintingPipeline"/> just before RunGlyphProgram.</summary>
     public void SetGlyphContours(int[]? contourEnds) => _iupEnds = contourEnds;
+
+    /// <summary>Ceiling on instructions per program run (fpgm, prep, or one glyph). Generous:
+    /// the heaviest well-behaved glyph measured across the bundled faces stays under ~200k, so
+    /// this only ever fires on a program that is genuinely not terminating.</summary>
+    private const long InstructionBudget = 10_000_000;
+
+    private long _instructions;
+
+    /// <summary>Zeroes the budget. Called at the start of each independent program run so a long
+    /// prep cannot eat the allowance a later glyph needs.</summary>
+    public void ResetInstructionBudget() => _instructions = 0;
 }

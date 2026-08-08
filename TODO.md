@@ -55,7 +55,50 @@ Known approximations vs FreeType:
   hinted width is within ~1 px; there is no per-point comparison against
   FreeType, so hinting accuracy is unverified against ground truth. A
   FreeType-reference harness is the prerequisite for any serious
-  hinting-fidelity work.
+  hinting-fidelity work. (`FreeTypeBindings` is a sibling repo in the org root,
+  so the binding layer already exists — this is a harness, not a port.)
+- **Three compounding interpreter defects — FIXED.** The `g`/`x` hang, the `t`
+  1-pixel collapse and the deformed Arabic letterforms were all one story, and
+  each defect hid the next. Kept because the *reason* nothing caught them is the
+  reusable lesson:
+  - `Zone`'s constructor never assigned `PointCount`. The glyph zone gets its
+    count set by `HintingPipeline`, but the twilight zone is only ever
+    constructed — so zone 0 reported 0 points, every twilight bounds-check
+    failed, and the whole zone silently became a no-op. Fonts stage reference
+    positions there, so a broad class of hinting simply did nothing.
+  - `ALIGNRP` returned on that failed bounds-check **without popping its
+    operands**. Fonts drive ALIGNRP from a `LOOPCALL`'d helper, so the surplus
+    accumulated one entry per call until the enclosing "call until the stack
+    drains" loop (`DEPTH … LT … JROT`) could never reach its exit depth. That
+    was the hang. `ExecIp` / `ExecShp` already drained correctly on the same
+    kind of guard; ALIGNRP was the lone inconsistency. The rule the code now
+    states explicitly: **a guard may skip an instruction's effect, never its
+    stack effect.**
+  - The `cvt ` table was read as `ushort`, but it is an array of FWORD —
+    *signed* int16. 26 of NotoSans-Regular's 150 control values are negative and
+    each became a huge positive; NotoSansArabic-Regular has 4 of 20. Defect 1
+    masked this completely, because with twilight dead the corrupt values never
+    reached a point position. DejaVuSans has no negative entries at all, which
+    is exactly why it looked clean throughout and NotoSans did not.
+  - **Why the suite missed it:** every test compared hinted output against
+    *itself* or against a stored baseline. Nothing asserted the one invariant
+    that makes hinting hinting — that grid-fitting nudges an outline onto the
+    pixel grid rather than resizing it. `HintingCorrectnessTests.HintedGlyphs_-
+    StayInProportionToUnhinted` is that assertion; it found 139 blown-up
+    (glyph, ppem) pairs in NotoSans-Regular, the worst 80x taller than unhinted.
+    Prefer invariants over baselines for this kind of defect: a baseline happily
+    records corruption as the expected answer.
+  - Still worth doing, and now unblocked rather than urgent: the FreeType
+    conformance oracle above. These three were found by reading a trace, which
+    works for catastrophic breakage and not for subtle mis-hinting.
+- **Arabic letterform deformation — fixed in principle, unconfirmed by eye.**
+  NotoSansArabic-Regular carried 4 corrupted control values, so the CVT defect
+  demonstrably applied to it; it no longer trips any proportion or budget check.
+  But the original report was visual (interior strokes displaced while bounding
+  boxes stayed byte-identical), and no self-comparison metric can settle it —
+  hinted-vs-unhinted pixel divergence at 24ppem is indistinguishable from
+  legitimate grid-fitting. Confirming it means putting it beside the browser
+  again in the web demo. Until someone does, treat this one as untested.
 - **Hinting does not reach the SDF render path.** `RenderSdf` builds the
   distance field from the UNHINTED outline (`DrawGlyph`), and consumers
   that render text as SDF (e.g. the pdf-viewer, `SdfTextThreshold = 0`)
