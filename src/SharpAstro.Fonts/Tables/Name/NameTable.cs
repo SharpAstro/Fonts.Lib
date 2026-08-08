@@ -19,6 +19,12 @@ public enum NameId : ushort
     Trademark = 7,
     Manufacturer = 8,
     Designer = 9,
+    /// <summary>License description — the full licensing terms, as the foundry states them.
+    /// The authoritative answer to "may we redistribute this file", which a file name or a
+    /// recollection of where the font came from is not.</summary>
+    License = 13,
+    /// <summary>URL of the license, where one is published separately (e.g. the OFL text).</summary>
+    LicenseUrl = 14,
     /// <summary>Typographic (preferred) family — present only when it differs from
     /// <see cref="Family"/>, i.e. when the family has more than the four style-linked faces.</summary>
     TypographicFamily = 16,
@@ -64,6 +70,13 @@ public sealed class NameTable
 
     /// <summary>Name ID 6 — the PostScript name, e.g. "NotoSans-Regular".</summary>
     public string? PostScriptName => Get(NameId.PostScriptName);
+
+    /// <summary>The face's own statement of its licensing terms (name ID 13), or null when it
+    /// makes none.</summary>
+    public string? License => Get(NameId.License);
+
+    /// <summary>URL of the face's license (name ID 14), or null when it states none.</summary>
+    public string? LicenseUrl => Get(NameId.LicenseUrl);
 
     // Language preference, best first. A font commonly repeats a name in many languages; we
     // want one deterministic pick, and an English one so callers can match against the English
