@@ -192,6 +192,33 @@ orientation) tables are not generated. These are layout-adjacent — a
 line-layout engine's concern rather than the shaper's — but they are the
 prerequisite for CJK / Thai line layout and vertical text.
 
+## Bundled font licensing
+
+Audited by reading each face's own `name` IDs 13/14 with this library, rather than
+by filename or recollection — `BundledFontLicenceTests` keeps it honest and fails on
+any new font that is not accounted for.
+
+**The web demo is clean.** All seven faces it serves state SIL OFL 1.1. That test has
+no exceptions list, which is what keeps `Merida.ttf` out: its provenance was never
+established and it states no licence, so it stays a fixture and off the site.
+
+**Five fixtures state no licence at all** — `D011A_subset`, `ISOCPEUR_subset`,
+`Merida`, `Tahoma_subset`, `XXTIIT_Arial_subset`. All are small glyph subsets
+extracted from PDFs, present since the first commit, each reproducing a specific
+parser defect that no freely-licensed font in the corpus reproduces. Subsetting
+discards the `name` table's licensing records along with everything else the PDF did
+not need, so silence is not evidence the original was unlicensed.
+
+**Open question, for a human rather than a test:** two of those originals are
+proprietary — `Tahoma_subset` (Microsoft) and `XXTIIT_Arial_subset` (Monotype),
+42 KB and 58 KB. Whether subset outlines at that size belong in a public test corpus
+is a licensing judgement. Options if it is decided they do not: regenerate the
+fixtures from a metrically-compatible libre face (Liberation Sans for Arial,
+DejaVu Sans for Tahoma) and re-record the baselines, or keep the PDFs and generate
+the subsets at test time rather than committing them. Note that
+`XXTIIT_Arial_subset` backs the `SmallSize_ArialSubset_*` hinted baselines, so
+replacing it means regenerating those.
+
 ## Out of scope
 
 These are NOT planned for SharpAstro.Fonts and would warrant a
