@@ -16,7 +16,7 @@
          the Codecs repo (PngReader.Decode), not the whole SharpAstro.Codecs facade
          (Fonts needs only PNG, not JPEG/TIFF/EXR/JXL). Floats within the current
          lockstep 3.5.x family — the Codecs repo publishes all its packages in step. -->
-    <PackageVersion Include="SharpAstro.Png" Version="3.5.*" />
+    <PackageVersion Include="SharpAstro.Png" Version="3.8.*" />
     <!-- Benchmarks -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.14.0" />
     <!-- tools/HbFixtureGen ONLY (dev-only golden-fixture generator, never shipped):
