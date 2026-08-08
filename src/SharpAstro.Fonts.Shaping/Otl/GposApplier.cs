@@ -440,8 +440,14 @@ internal static class GposApplier
     /// Post-lookup positioning pass (HarfBuzz's zero-mark-widths + propagate-attachment-offsets):
     /// zero the advance of every mark (by GDEF class), then resolve each attachment chain so a
     /// mark's stored anchor-relative offset becomes its on-line offset — the parent's resolved
-    /// offset plus the (negated) advances of the glyphs between the parent and the mark. Runs on
-    /// the buffer in logical order, before any RTL reversal (RTL mark propagation lands with H4).
+    /// offset plus the advances of the glyphs spanning parent and mark. Runs on the buffer in
+    /// logical order, before any RTL reversal.
+    ///
+    /// <para>The span and its sign depend on direction, exactly as in HarfBuzz: going forward the
+    /// mark trails its parent, so the advances of <c>[parent, mark)</c> are subtracted; going
+    /// backward the pen has not yet crossed the parent, so the advances of <c>(parent, mark]</c>
+    /// are added instead. Applying the forward rule to RTL puts every attached mark out by the
+    /// base glyph's full advance — for Arabic that is the dots landing under the wrong letter.</para>
     /// </summary>
     public static void Finish(ShapingFont font, ShapeBuffer buffer)
     {
@@ -466,13 +472,17 @@ internal static class GposApplier
         // 2) Resolve attachment chains (mark and cursive) — skipped entirely when no GPOS
         // attachment was recorded (the common case: no marks/cursive), avoiding the per-glyph walk.
         if (buffer.HasAttachments)
+        {
+            var backward = buffer.Direction == ShapeDirection.RightToLeft;
             for (var k = 0; k < chains.Length; k++)
-                ResolveChain(k, hmtx, glyphs, advDeltas, xOffsets, yOffsets, chains, attachTypes);
+                ResolveChain(k, hmtx, glyphs, advDeltas, xOffsets, yOffsets, chains, attachTypes,
+                    backward);
+        }
     }
 
     private static void ResolveChain(int i, HmtxTable? hmtx, ReadOnlySpan<uint> glyphs,
         ReadOnlySpan<int> advDeltas, Span<int> xOffsets, Span<int> yOffsets,
-        Span<int> chains, ReadOnlySpan<byte> attachTypes)
+        Span<int> chains, ReadOnlySpan<byte> attachTypes, bool backward)
     {
         var chain = chains[i];
         if (chain == 0) return;
@@ -480,7 +490,8 @@ internal static class GposApplier
         var j = i + chain; // parent
         if ((uint)j >= (uint)glyphs.Length) return;
 
-        ResolveChain(j, hmtx, glyphs, advDeltas, xOffsets, yOffsets, chains, attachTypes); // parent first
+        ResolveChain(j, hmtx, glyphs, advDeltas, xOffsets, yOffsets, chains, attachTypes,
+            backward); // parent first
 
         if ((AttachType)attachTypes[i] == AttachType.Cursive)
         {
@@ -490,13 +501,20 @@ internal static class GposApplier
             return;
         }
 
-        // Mark: fold in the parent's offset, then subtract the absolute advances between the
-        // parent and the mark (parent precedes the mark in logical order; horizontal → y-advance 0).
+        // Mark: fold in the parent's offset, then account for the advances spanning parent and
+        // mark. The parent precedes the mark in logical order either way; what changes is which
+        // side of the pen the parent sits on (horizontal layout → y-advance 0 throughout).
         xOffsets[i] += xOffsets[j];
         yOffsets[i] += yOffsets[j];
         if (hmtx is not null)
-            for (var k = j; k < i; k++)
-                xOffsets[i] -= hmtx.GetAdvanceWidth(glyphs[k]) + advDeltas[k];
+        {
+            if (backward)
+                for (var k = j + 1; k <= i; k++)
+                    xOffsets[i] += hmtx.GetAdvanceWidth(glyphs[k]) + advDeltas[k];
+            else
+                for (var k = j; k < i; k++)
+                    xOffsets[i] -= hmtx.GetAdvanceWidth(glyphs[k]) + advDeltas[k];
+        }
     }
 
     private static ushort ReadU16(ReadOnlySpan<byte> data, int offset)

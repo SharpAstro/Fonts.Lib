@@ -66,6 +66,14 @@ Directory.CreateDirectory(outDir);
     // H4 Hebrew RTL (non-joining): pure reversal + cmap, no positional forms. Proves the RTL path.
     ("DejaVuSans.ttf", "אב", "hebr", true),                 // alef+bet
     ("DejaVuSans.ttf", "שלום", "hebr", true),     // shin-lamed-vav-finalmem "shalom"
+    // A real Arabic face, rather than DejaVu's minimal 'arab' coverage. Added to settle a
+    // specific report: in the web demo a dot in "مرحبا بالعالم" sat differently from the
+    // browser's rendering of the same file, in the UNHINTED pane — i.e. a shaping/mark-
+    // positioning difference rather than anything to do with the hinting interpreter. The two
+    // words are also shaped separately so a divergence can be localised to one of them.
+    ("NotoSansArabic-Regular.ttf", "مرحبا بالعالم", "arab", true),   // "hello world"
+    ("NotoSansArabic-Regular.ttf", "مرحبا", "arab", true),           // "marhaba" alone
+    ("NotoSansArabic-Regular.ttf", "بالعالم", "arab", true),         // "bil-aalam" alone
 ];
 
 var byFont = cases.GroupBy(c => c.Font, StringComparer.Ordinal);
