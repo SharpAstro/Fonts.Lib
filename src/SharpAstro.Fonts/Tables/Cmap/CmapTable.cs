@@ -129,12 +129,25 @@ public sealed class CmapTable
                         // …and the RAW code: mPDF (and other CJK subsetters) write a (3,0) subtable
                         // keyed by the raw 1-byte code, NOT PUA-offset, and CID != GID for these
                         // subsets. Without this the glyph falls through to the wrong direct-GID below
-                        // (the garbled-CJK bug). Mac (1,0) stays skipped — it maps charCodes to wrong
-                        // GIDs in other subsets (Tahoma/ISOCPEUR); (3,0)-raw covers the CJK case.
+                        // (the garbled-CJK bug).
                         gid = symbol.GetGlyphId(charCode);
                         if (InRange(gid)) return gid;
                     }
-                    // Direct GID fallback — Identity-style mapping in the subset.
+                    // Mac (1,0), LAST before the guess. It stays behind (3,0) because in
+                    // Tahoma/ISOCPEUR-style subsets it only duplicates what the symbol cmap already
+                    // answered — but it must be tried, because macOS Quartz writes simple-TrueType
+                    // subsets whose ONLY subtable is (1,0), and skipping it left those with nothing
+                    // but the direct-GID guess below: Korean body text rendered as unrelated glyphs
+                    // in codepoint-sorted order, and Latin/punctuation subsets (whose codes sit past
+                    // a 2-20 glyph subset's end) rendered as nothing at all.
+                    var macRoman = Find(1, 0);
+                    if (macRoman is not null)
+                    {
+                        gid = macRoman.GetGlyphId(charCode);
+                        if (InRange(gid)) return gid;
+                    }
+                    // Direct GID fallback — Identity-style mapping in the subset. A guess, so it
+                    // ranks below every real subtable above.
                     if (charCode < numGlyphs) return charCode;
                 }
                 return 0u;

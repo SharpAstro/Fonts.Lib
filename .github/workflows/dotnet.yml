@@ -7,6 +7,23 @@ on:
     branches: [ main ]
 
 env:
+  # Minor bump 1.10 -> 1.11: embedded PDF subsets carrying ONLY a Mac Roman (1,0) cmap now
+  # select glyphs through it instead of guessing.
+  #   * GlyphMapHint.EmbeddedSubset skipped the (1,0) subtable outright. The skip was added for
+  #     Tahoma/ISOCPEUR-style subsets, where (1,0) only duplicates the (3,0) symbol cmap that
+  #     already answers first -- but macOS Quartz writes simple-TrueType subsets whose ONLY
+  #     subtable is (1,0), and there the skip left nothing except the direct-GID fallback:
+  #     the char code used as a glyph index. Korean body text came out as unrelated glyphs in
+  #     codepoint-sorted order (the subset's own glyph order, which is what made it look like
+  #     plausible-but-wrong Hangul), while the same file's Latin and punctuation subsets -- 2
+  #     to 20 glyphs against char codes like 44 and 52 -- indexed past the end of the glyph
+  #     array and rendered as nothing at all, so commas, periods and page numbers vanished.
+  #   * (1,0) now ranks last among the real subtables and ahead of the guess. Measured against
+  #     the bundled subsets, that changes the answer for zero char codes in XXTIIT+Arial,
+  #     Tahoma and ISOCPEUR: their (3,0) table answers first for every code it covers.
+  # Behaviour change is confined to lookups that previously reached the direct-GID fallback --
+  # i.e. only where the answer was already a guess.
+  #
   # Minor bump 1.9 -> 1.10: hinting and RTL mark-attachment fixes, plus one additive API.
   #   * THREE compounding TrueType interpreter defects, each masking the next. Zone's
   #     constructor never set PointCount, so the twilight zone -- which nothing else ever
