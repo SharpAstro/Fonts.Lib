@@ -16,6 +16,14 @@ dotnet test -c Release                              # whole solution (core + sha
 dotnet test tests/SharpAstro.Fonts.Tests -c Release # just the core suite (fast iteration)
 ```
 
+## Versioning
+
+`<VersionMajorMinor>` in the repo-root `Directory.Build.props` (not `src/`, unlike the other siblings)
+is the one place the `X.Y` is written; CI reads it back and appends the run number. The matching release note goes in [CHANGELOG.md](CHANGELOG.md) at the
+repo root, in the same commit — newest first, one `## Major.Minor` section each. (The notes used to
+live in a comment block in `.github/workflows/dotnet.yml`; nothing ever read them there, and they had
+grown to 90 of that file's 150 lines.)
+
 ## Benchmarks
 
 ```bash
