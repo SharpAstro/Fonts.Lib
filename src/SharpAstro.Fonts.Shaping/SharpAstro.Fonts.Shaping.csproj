@@ -6,6 +6,7 @@
     <AssemblyName>SharpAstro.Fonts.Shaping</AssemblyName>
     <PackageId>SharpAstro.Fonts.Shaping</PackageId>
     <Description>Pure-managed OpenType text-shaping engine (GSUB/GPOS/GDEF) over SharpAstro.Fonts. AOT-compatible, no native dependencies. Staged scope: OT-layout core, ligatures/kerning/marks, Arabic joining; Indic/USE out of scope.</Description>
+    <PackageTags>opentype shaping gsub gpos gdef ligatures kerning arabic text aot</PackageTags>
     <IsAotCompatible>true</IsAotCompatible>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>

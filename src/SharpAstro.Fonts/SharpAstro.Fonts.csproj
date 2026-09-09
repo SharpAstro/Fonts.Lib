@@ -6,6 +6,7 @@
     <AssemblyName>SharpAstro.Fonts</AssemblyName>
     <PackageId>SharpAstro.Fonts</PackageId>
     <Description>Pure-managed, MIT-licensed C# OpenType / TrueType font loader and rasterizer.</Description>
+    <PackageTags>font opentype truetype rasterizer glyph text pure-managed aot</PackageTags>
     <IsAotCompatible>true</IsAotCompatible>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
