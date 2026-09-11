@@ -69,4 +69,34 @@ public class HintingBudgetTests
         hintedDiffers.ShouldBeGreaterThan(0,
             $"{face}: hinting changed no glyph at 12ppem — the budget is probably clipping it");
     }
+
+    /// <summary>
+    /// An fpgm that defines function 0 as "push 0; CALL" — a function whose body calls itself —
+    /// and then calls it. <c>PUSHB[0] 0, FDEF, [PUSHB[0] 0, CALL], ENDF, PUSHB[0] 0, CALL</c>.
+    /// </summary>
+    private static readonly byte[] SelfCallingFpgm =
+        [0xB0, 0x00, 0x2C, 0xB0, 0x00, 0x2B, 0x2D, 0xB0, 0x00, 0x2B];
+
+    /// <summary>
+    /// A function that calls itself must be abandoned at the depth cap, not followed until the
+    /// machine stack runs out.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>This test cannot fail in the ordinary way.</b> Without the cap the interpreter
+    /// recurses its own Execute, and a .NET stack overflow is not a catchable exception — the whole
+    /// test host dies with no assertion, no stack trace and no other test's result. A process that
+    /// vanishes IS the failure signal here.</para>
+    /// <para>Found in a real document: the face embedded in a PDF recursed roughly 600 frames deep
+    /// and took the viewer's process with it.</para>
+    /// </remarks>
+    [Fact]
+    public void SelfCallingFunction_IsAbandonedAtTheCap_RatherThanOverflowingTheStack()
+    {
+        var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.DejaVuSans));
+        var interp = font.CreateHintingInterpreter();
+        interp.ShouldNotBeNull();
+        interp.ResetInstructionBudget();
+
+        Should.Throw<HintingBudgetExceededException>(() => interp.RunFpgm(SelfCallingFpgm));
+    }
 }

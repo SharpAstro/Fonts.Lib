@@ -422,10 +422,7 @@ internal sealed class Interpreter
             {
                 var fid = Pop();
                 if ((uint)fid < (uint)_functions.Length && _functions[fid].Code is not null)
-                {
-                    var f = _functions[fid];
-                    Execute(f.Code!, f.Start, f.Length);
-                }
+                    CallFunction(_functions[fid]);
                 break;
             }
             case Op.LOOPCALL:
@@ -434,8 +431,10 @@ internal sealed class Interpreter
                 var n = Pop();
                 if ((uint)fid < (uint)_functions.Length && _functions[fid].Code is not null)
                 {
+                    // One frame for the whole loop, not one per iteration: the iterations are
+                    // sequential, so they cost stack depth only through what the body itself calls.
                     var f = _functions[fid];
-                    for (var i = 0; i < n; i++) Execute(f.Code!, f.Start, f.Length);
+                    for (var i = 0; i < n; i++) CallFunction(f);
                 }
                 break;
             }
@@ -1436,5 +1435,47 @@ internal sealed class Interpreter
 
     /// <summary>Zeroes the budget. Called at the start of each independent program run so a long
     /// prep cannot eat the allowance a later glyph needs.</summary>
-    public void ResetInstructionBudget() => _instructions = 0;
+    public void ResetInstructionBudget()
+    {
+        _instructions = 0;
+        // The depth counter is NOT unwound when a program aborts — the exception leaves every frame
+        // at once — so it is cleared here, alongside the budget, for the next independent run.
+        _callDepth = 0;
+    }
+
+    /// <summary>
+    /// Ceiling on how deeply CALL/LOOPCALL may nest. Unlike the instruction budget, exceeding this
+    /// is not merely slow: <see cref="Execute"/> recurses for a call, so an unbounded chain
+    /// overflows the MACHINE stack, which .NET cannot catch and which kills the process outright.
+    /// </summary>
+    /// <remarks>
+    /// <para>A font is free to define a function that calls itself, and one in the wild does: the
+    /// face embedded in "The Davis 906.pdf" recursed ~600 deep and took the process down with no
+    /// exception and no stack trace beyond the repeat count.</para>
+    /// <para>FreeType bounds its own call stack and raises <c>Stack_Overflow</c>, abandoning the
+    /// glyph program and falling back to the unhinted outline, which is exactly what throwing here
+    /// produces. 128 is far above anything real — well-behaved fonts nest a handful deep — and far
+    /// below the ~600 frames that exhausted a 1 MB stack, so it separates the two cleanly.</para>
+    /// </remarks>
+    private const int MaxCallDepth = 128;
+
+    private int _callDepth;
+
+    /// <summary>
+    /// Runs a function body for CALL/LOOPCALL, refusing to nest past <see cref="MaxCallDepth"/>.
+    /// </summary>
+    /// <remarks>
+    /// The counter is incremented and decremented around the call rather than guarded with
+    /// try/finally, because the only way out other than a normal return is the abort exception,
+    /// which unwinds every frame at once and is followed by
+    /// <see cref="ResetInstructionBudget"/> before anything runs again.
+    /// </remarks>
+    private void CallFunction(in Function f)
+    {
+        if (_callDepth >= MaxCallDepth) throw new HintingBudgetExceededException(
+            $"Hint program nested CALL past {MaxCallDepth} frames.");
+        _callDepth++;
+        Execute(f.Code!, f.Start, f.Length);
+        _callDepth--;
+    }
 }
