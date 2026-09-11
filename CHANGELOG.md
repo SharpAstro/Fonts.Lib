@@ -6,6 +6,28 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.12
+
+A hint program that calls itself is abandoned instead of taking the process down.
+  * TrueType's CALL and LOOPCALL run a function body by recursing the interpreter's own
+    `Execute`, and nothing bounded the nesting. A font may define a function that calls
+    itself, and one in the wild does -- a face embedded in a PDF recursed about 600 frames
+    deep and exhausted the machine stack.
+  * That is worse than the instruction budget's runaway loop, which this already caught. A
+    .NET stack overflow is NOT a catchable exception: the process dies with no exception,
+    no stack trace beyond a repeat count, and no chance for the caller to fall back. No
+    amount of defensive catching outside this library helps, so the bound has to be here.
+  * CALL nesting is now capped at 128 frames, and exceeding it throws the same abort this
+    library already uses for a non-terminating program -- so the glyph falls back to its
+    unhinted outline, or the whole face does when it happens in `fpgm` or `prep`. That is
+    FreeType's behaviour too: it bounds its own call stack and raises `Stack_Overflow`,
+    abandoning the glyph program. 128 separates the two cases cleanly, since well-behaved
+    fonts nest a handful deep. LOOPCALL costs one frame for the whole loop rather than one
+    per iteration, its iterations being sequential.
+  * The test for it cannot fail in the ordinary way: without the cap the test host dies
+    outright, so a process that vanishes IS the failure signal. The three well-behaved
+    faces still hint, which is what rules out a cap set too low.
+
 ## 1.11
 
 Embedded PDF subsets carrying ONLY a Mac Roman (1,0) cmap now
