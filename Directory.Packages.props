@@ -2,8 +2,6 @@
 
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-    <!-- Allow floating versions so SharpAstro.Png auto-picks up new CI
-         publishes from the Codecs repo without manual bumps here. -->
     <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
   </PropertyGroup>
 
@@ -12,19 +10,10 @@
     <PackageVersion Include="Shouldly" Version="4.3.0" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
-    <!-- PNG decode for CBDT/sbix color-bitmap glyphs. The dedicated codec from
-         the Codecs repo (PngReader.Decode), not the whole SharpAstro.Codecs facade
-         (Fonts needs only PNG, not JPEG/TIFF/EXR/JXL). Floats within the current
-         lockstep 3.5.x family — the Codecs repo publishes all its packages in step. -->
-    <PackageVersion Include="SharpAstro.Png" Version="3.8.*" />
-    <!-- SharpAstro.Fonts.Web (demo site, never packed): Blazor WebAssembly host. -->
+    <PackageVersion Include="SharpAstro.Png" Version="3.14.*" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.*" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.*" />
-    <!-- Benchmarks -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.14.0" />
-    <!-- tools/HbFixtureGen ONLY (dev-only golden-fixture generator, never shipped):
-         real HarfBuzz via the SkiaSharp-family binding. The shipping engine
-         (SharpAstro.Fonts.Shaping) is pure managed and must not reference these. -->
     <PackageVersion Include="HarfBuzzSharp" Version="8.*" />
     <PackageVersion Include="HarfBuzzSharp.NativeAssets.Linux" Version="8.*" />
   </ItemGroup>
