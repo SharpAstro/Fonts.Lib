@@ -85,6 +85,8 @@ internal sealed class QuadraticSegment : EdgeSegment
         c = new QuadraticSegment(Point(2.0 / 3.0), Vector2D.Mix(_p1, _p2, 2.0 / 3.0), _p2) { Color = Color };
     }
 
+    public override EdgeSegment Reversed() => new QuadraticSegment(_p2, _p1, _p0) { Color = Color };
+
     public override void ExtendBounds(ref double left, ref double bottom, ref double right, ref double top)
     {
         LinearSegment.Include(_p0, ref left, ref bottom, ref right, ref top);

@@ -198,6 +198,69 @@ public class MsdfRasterizerTests
         }
     }
 
+    [Theory]
+    [InlineData(Fixtures.DejaVuSans, 'a')]
+    [InlineData(Fixtures.DejaVuSans, 'e')]
+    [InlineData(Fixtures.DejaVuSans, 'o')]
+    [InlineData(Fixtures.SourceSans3, 'a')]
+    [InlineData(Fixtures.SourceSans3, 'e')]
+    [InlineData(Fixtures.SourceSans3, 'o')]
+    [InlineData("cmr10.pfb", 'a')]
+    [InlineData("cmr10.pfb", 'e')]
+    [InlineData("cmr10.pfb", 'o')]
+    public void RenderMtsdf_TrueDistance_IsOneLipschitz(string fixture, char ch)
+    {
+        // The A channel is a true signed distance, and a distance cannot change faster than the point moves:
+        // two texels one apart differ by at most one texel of distance, 255 / (2 * spread) levels, plus a
+        // level of rounding (clamping at 0 and 255 only shrinks a step). That makes it a check against the
+        // geometry itself rather than against a second rasterizer.
+        //
+        // A CFF or Type 1 font winds its outer contour the other way from TrueType, and a glyph with a
+        // counter (a, e, o) is where the overlapping-contour combiner reads the windings. When it took
+        // them as TrueType's, every texel outside the glyph measured to the COUNTER, across the stroke,
+        // so the field fell from the edge straight to 0: the top of a Times 'a' read 149 beside 0, the
+        // bilinear edge sat a seventh of a texel out instead of two thirds, and the hairline all but
+        // vanished on screen.
+        const float spread = 4f;
+        const float ppem = 64f;
+        var m = RenderGlyph(fixture, ch, ppem, spread);
+        m.IsEmpty.ShouldBeFalse();
+
+        var maxStep = 255f / (2f * spread) + 1f;
+        var worst = 0;
+        var worstAt = (X: 0, Y: 0);
+        for (var y = 0; y < m.Height; y++)
+        {
+            for (var x = 0; x < m.Width; x++)
+            {
+                var a = m.Rgba[(y * m.Width + x) * 4 + 3];
+                if (x + 1 < m.Width && Math.Abs(a - m.Rgba[(y * m.Width + x + 1) * 4 + 3]) is var dx && dx > worst)
+                    (worst, worstAt) = (dx, (x, y));
+                if (y + 1 < m.Height && Math.Abs(a - m.Rgba[((y + 1) * m.Width + x) * 4 + 3]) is var dy && dy > worst)
+                    (worst, worstAt) = (dy, (x, y));
+            }
+        }
+
+        ((float)worst).ShouldBeLessThanOrEqualTo(maxStep,
+            $"true distance jumps {worst} levels between neighbouring texels at {worstAt} (at most {maxStep:F0} allowed)");
+    }
+
+    private static MtsdfBitmap RenderGlyph(string fixture, char ch, float ppem, float spread)
+    {
+        if (fixture.EndsWith(".pfb", StringComparison.OrdinalIgnoreCase))
+        {
+            var t1 = Type1.Type1Font.LoadPfbFromFile(Fixtures.Path(fixture));
+            var name = ch.ToString();
+            t1.HasGlyph(name).ShouldBeTrue();
+            return MsdfRasterizer.RasterizeAuto(sink => t1.DrawGlyph(name, sink), ppem, t1.UnitsPerEm, spread);
+        }
+
+        var font = OpenTypeFont.LoadFromFile(Fixtures.Path(fixture));
+        var gid = font.GetGlyphId(ch);
+        gid.ShouldNotBe(0u);
+        return font.RenderMtsdf(gid, ppem, spread);
+    }
+
     [Fact]
     public void DumpChannels()
     {

@@ -49,6 +49,9 @@ internal abstract class EdgeSegment
     /// <summary>Split into three equal-parameter sub-segments (used by the single-corner "teardrop" colouring case).</summary>
     public abstract void SplitInThirds(out EdgeSegment a, out EdgeSegment b, out EdgeSegment c);
 
+    /// <summary>The same curve traversed the other way: its <see cref="Point"/>(t) is this edge's Point(1 − t).</summary>
+    public abstract EdgeSegment Reversed();
+
     /// <summary>Expand the axis-aligned ink box to include this segment (endpoints + interior extrema).</summary>
     public abstract void ExtendBounds(ref double left, ref double bottom, ref double right, ref double top);
 

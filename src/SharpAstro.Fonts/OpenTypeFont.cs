@@ -601,8 +601,8 @@ public sealed class OpenTypeFont
     /// pseudo-distance and A carries the plain true signed distance (matching the
     /// single-channel field, so A is a drop-in for <see cref="RenderSdf"/> and
     /// reserved for outline / glow / weight effects). Returns
-    /// <see cref="MtsdfBitmap.Empty"/> when the outline is empty. TrueType is the
-    /// verified path; CFF is untested (see <see cref="MsdfRasterizer"/>).
+    /// <see cref="MtsdfBitmap.Empty"/> when the outline is empty. TrueType and CFF
+    /// outlines both go through it (see <see cref="MsdfRasterizer"/>).
     /// </summary>
     public MtsdfBitmap RenderMtsdf(uint glyphId, float pixelsPerEm, float spread = 4f)
         => MsdfRasterizer.RasterizeAuto(

@@ -16,11 +16,11 @@ namespace SharpAstro.Fonts.Rasterizer;
 /// distance encoding is identical (±<paramref name="spread"/> pixels → [0, 1]),
 /// so the A channel is a drop-in replacement for the single-channel field.</para>
 ///
-/// <para>Stateless — every call allocates its own scratch. TrueType (<c>glyf</c>)
-/// is the verified path; CFF/Type2 cubics go through the same code but their
-/// CCW-outer winding is only corrected globally by the polarity pass, so an
-/// overlapping-contour CFF glyph is not yet guaranteed correct (matches the
-/// single-channel path's coverage).</para>
+/// <para>Stateless — every call allocates its own scratch. TrueType (<c>glyf</c>),
+/// CFF/Type2 and Type 1 outlines all take the same path: a CFF or Type 1 outline
+/// winds its outer contours counter-clockwise, so the shape is first reoriented to
+/// TrueType's winding (<see cref="Shape.OrientLikeTrueType"/>), which the
+/// overlapping-contour combiner depends on.</para>
 /// </summary>
 public static class MsdfRasterizer
 {
@@ -52,6 +52,8 @@ public static class MsdfRasterizer
         if (shape.IsEmpty)
             return MtsdfBitmap.Empty;
 
+        // Before colouring and before any distance: the combiner reads contour windings as TrueType's.
+        shape.OrientLikeTrueType();
         EdgeColoring.ColorSimple(shape);
 
         var bounds = shape.ComputeBounds();

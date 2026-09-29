@@ -6,6 +6,33 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.13
+
+A CFF or Type 1 glyph with a counter (a, e, o, d, ...) no longer draws thinner than its
+outline from its MTSDF.
+  * The generator's overlapping-contour combiner (msdfgen's) tells a glyph's outer outline
+    from its counters by each contour's winding, and it read them as TrueType's: outer
+    contours clockwise. CFF and Type 1 wind them the other way, so every texel OUTSIDE such a
+    glyph measured its distance to the counter, across the stroke, instead of to the nearest
+    edge. The field fell from the edge straight to 0 where it should ramp down over four
+    texels, and the polarity pass that flipped the finished field could only correct its
+    sign, not which contour it had measured.
+  * On screen every outer edge of those glyphs sat about half a texel inside the outline.
+    Stems survived that; a hairline one texel thick did not. The top of a Times 'a' in an
+    arXiv paper read 149 beside 0 where it should read 149 beside 117, and drew with a gap
+    at reading size. A glyph with one contour (n, l, v) was never affected, nor was any
+    TrueType glyph.
+  * The shape is now reoriented to TrueType's winding before edge colouring, which is what
+    msdf-atlas-gen does: a point well outside the glyph must measure outside to its nearest
+    edge, and when it measures inside every contour is reversed. The polarity pass stays as
+    a safety net that should no longer fire.
+  * The test checks the geometry rather than a second rasterizer: the true-distance channel
+    of a distance field cannot change faster than the point moves, so neighbouring texels
+    may differ by one texel of distance. SourceSans3 (CFF) and cmr10 (Type 1) broke that by
+    156-159 levels against an allowed 33; DejaVu Sans (TrueType) held it throughout.
+  * Anything that caches these fields must re-rasterize them, or it keeps serving the thin
+    ones.
+
 ## 1.12
 
 A hint program that calls itself is abandoned instead of taking the process down.
