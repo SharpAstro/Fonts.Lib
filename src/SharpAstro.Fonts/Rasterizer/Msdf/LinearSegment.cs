@@ -36,6 +36,8 @@ internal sealed class LinearSegment(Vector2D p0, Vector2D p1) : EdgeSegment
         c = new LinearSegment(Point(2.0 / 3.0), _p1) { Color = Color };
     }
 
+    public override EdgeSegment Reversed() => new LinearSegment(_p1, _p0) { Color = Color };
+
     public override void ExtendBounds(ref double left, ref double bottom, ref double right, ref double top)
     {
         Include(_p0, ref left, ref bottom, ref right, ref top);

@@ -187,11 +187,15 @@ internal static class MsdfGenerator
     }
 
     /// <summary>
-    /// Force "inside ⇒ value &gt; 0.5". The per-edge sign follows the font's
-    /// contour winding (CW-outer for TrueType, CCW-outer for CFF), so the overall
-    /// polarity can come out inverted. Vote median-sign vs the winding-rule
-    /// inside/outside test at clear (non-edge) sample texels and flip the whole
-    /// cell if the majority disagree.
+    /// Force "inside ⇒ value &gt; 0.5". The per-edge sign follows the contour
+    /// winding, which <see cref="Shape.OrientLikeTrueType"/> has already made
+    /// TrueType's (CW-outer) for CFF and Type 1 outlines too, so this should not
+    /// fire; it stays as a safety net for an outline whose orientation that test
+    /// misjudges. Vote median-sign vs the winding-rule inside/outside test at
+    /// clear (non-edge) sample texels and flip the whole cell if the majority
+    /// disagree. A flip here cannot repair the field around a counter, only its
+    /// sign: the combiner has already measured with the windings the wrong way
+    /// round.
     /// </summary>
     private static void CorrectPolarity(Shape shape, float[] pixels, int width, int height, CellProjection projection)
     {

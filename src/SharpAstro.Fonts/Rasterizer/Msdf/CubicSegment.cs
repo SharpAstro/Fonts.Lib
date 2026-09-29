@@ -114,6 +114,8 @@ internal sealed class CubicSegment(Vector2D p0, Vector2D p1, Vector2D p2, Vector
             _p3) { Color = Color };
     }
 
+    public override EdgeSegment Reversed() => new CubicSegment(_p3, _p2, _p1, _p0) { Color = Color };
+
     public override void ExtendBounds(ref double left, ref double bottom, ref double right, ref double top)
     {
         LinearSegment.Include(_p0, ref left, ref bottom, ref right, ref top);
