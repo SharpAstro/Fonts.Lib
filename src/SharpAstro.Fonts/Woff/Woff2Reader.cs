@@ -6,7 +6,7 @@ namespace SharpAstro.Fonts.Woff;
 
 /// <summary>
 /// Reads WOFF2 font containers and unpacks them to raw SFNT bytes that can be
-/// loaded by <see cref="OpenTypeFont.Load(ReadOnlyMemory{byte})"/>.
+/// loaded by <see cref="OpenTypeFont.Load(ReadOnlyMemory{byte}, int)"/>.
 ///
 /// <para>Spec: https://www.w3.org/TR/WOFF2/</para>
 ///
@@ -109,7 +109,7 @@ public static class Woff2Reader
     /// <summary>
     /// Unpack a WOFF2 container to a plain SFNT byte array. The returned
     /// array can be passed directly to
-    /// <see cref="OpenTypeFont.Load(byte[])"/>.
+    /// <see cref="OpenTypeFont.Load(byte[], int)"/>.
     /// </summary>
     /// <exception cref="InvalidDataException">Thrown when the WOFF2 data is malformed.</exception>
     public static byte[] UnpackToSfnt(ReadOnlySpan<byte> woff2Data)

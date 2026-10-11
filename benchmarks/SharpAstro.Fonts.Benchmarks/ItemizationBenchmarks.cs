@@ -5,7 +5,7 @@ namespace SharpAstro.Fonts.Benchmarks;
 
 /// <summary>
 /// Script/direction itemization: the F4 Latin fast path (one vectorized <c>ContainsAnyExceptInRange</c>
-/// scan → single run) vs the general per-rune <see cref="Script.Get"/> walk, plus the bidi-aware
+/// scan → single run) vs the general per-rune <c>Script.Get</c> walk, plus the bidi-aware
 /// itemizer. The span forms reuse a pooled run list and allocate nothing; the convenience overload
 /// that returns a fresh list is included for contrast (MemoryDiagnoser shows the delta).
 /// </summary>

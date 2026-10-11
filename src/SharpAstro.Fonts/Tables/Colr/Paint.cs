@@ -75,7 +75,7 @@ public readonly record struct ColorStop(float StopOffset, ushort PaletteIndex, f
 /// Lazy reference to a COLR v1 paint record. Decoding happens on demand from
 /// a <see cref="ReadOnlyMemory{Byte}"/> view of the original COLR table.
 ///
-/// <para>This is a <see cref="readonly"/> struct (8 bytes pointer + 4 bytes
+/// <para>This is a <see langword="readonly"/> struct (8 bytes pointer + 4 bytes
 /// offset) so paint trees can be walked recursively with zero allocation.</para>
 /// </summary>
 public readonly struct PaintRef

@@ -13,7 +13,7 @@ namespace SharpAstro.Fonts.Rasterizer;
 /// <para>Output is an <see cref="MtsdfBitmap"/>: RGB hold the multi-channel signed
 /// pseudo-distance, A holds the true signed distance. The grid, padding, and
 /// Left/Top positioning match <see cref="SdfRasterizer.RasterizeAuto"/>, and the
-/// distance encoding is identical (±<paramref name="spread"/> pixels → [0, 1]),
+/// distance encoding is identical (±<c>spread</c> pixels → [0, 1]),
 /// so the A channel is a drop-in replacement for the single-channel field.</para>
 ///
 /// <para>Stateless — every call allocates its own scratch. TrueType (<c>glyf</c>),

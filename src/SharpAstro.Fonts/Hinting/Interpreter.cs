@@ -800,7 +800,7 @@ internal sealed class Interpreter
     }
 
     /// <summary>
-    /// Move (or just touch) <paramref name="pIdx"/> to its grid-rounded position
+    /// Move (or just touch) the point popped off the stack to its grid-rounded position
     /// along the projection vector. Used by MDAP.
     /// </summary>
     private void ExecMdap(bool round)
