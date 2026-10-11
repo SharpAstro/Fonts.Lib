@@ -10,7 +10,7 @@ namespace SharpAstro.Fonts.Outlines;
 ///
 /// Spec: https://learn.microsoft.com/typography/opentype/spec/glyf#composite-glyph-table
 ///
-/// Stateless — safe to call from any thread provided <paramref name="loader"/>
+/// Stateless — safe to call from any thread provided the <see cref="GlyphLoader"/>
 /// is itself thread-safe (it should be: it's just a closure over loca + glyf
 /// span access).
 /// </summary>

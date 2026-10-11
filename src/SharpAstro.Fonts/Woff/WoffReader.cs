@@ -12,7 +12,7 @@ namespace SharpAstro.Fonts.Woff;
 ///
 /// <para>WOFF wraps a standard SFNT font with per-table zlib compression.
 /// <see cref="UnpackToSfnt"/> rebuilds the original SFNT byte array which can
-/// be passed directly to <see cref="OpenTypeFont.Load(byte[])"/>.</para>
+/// be passed directly to <see cref="OpenTypeFont.Load(byte[], int)"/>.</para>
 /// </summary>
 public static class WoffReader
 {
@@ -38,7 +38,7 @@ public static class WoffReader
 
     /// <summary>
     /// Unpack a WOFF1 byte stream into a raw SFNT byte array that can be
-    /// passed to <see cref="OpenTypeFont.Load(byte[])"/>.
+    /// passed to <see cref="OpenTypeFont.Load(byte[], int)"/>.
     /// </summary>
     /// <param name="woffData">The complete WOFF1 file contents.</param>
     /// <returns>
