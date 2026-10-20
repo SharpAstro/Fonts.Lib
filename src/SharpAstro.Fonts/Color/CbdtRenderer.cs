@@ -22,24 +22,13 @@ internal static class CbdtRenderer
         var img = font.Cbdt.GetImage(strike, glyphId);
         if (img is null) return null;
 
-        // Decode PNG -> RGBA8 via the dedicated SharpAstro.Png codec. PngImage.ToRgba8
+        // Decode PNG -> RGBA8 via the dedicated SharpAstro.Png codec. TryDecodeRgba8
         // expands every color type (greyscale / RGB / indexed / +alpha / RGBA) at
-        // 8/16-bit; a variant it can't expand (or a malformed glyph) throws -> the catch
-        // below turns it into a null (skip). CBDT color glyphs are RGBA8 (type 6) here.
-        byte[] srcPixels;
-        int srcW, srcH;
-        try
-        {
-            var decoded = PngReader.Decode(img.Value.Png.Span);
-            if (decoded.Width <= 0 || decoded.Height <= 0) return null;
-            srcPixels = decoded.ToRgba8();
-            srcW = decoded.Width;
-            srcH = decoded.Height;
-        }
-        catch
-        {
+        // 8/16-bit; a variant it can't expand (or a malformed glyph) is false -> null
+        // (skip). CBDT color glyphs are RGBA8 (type 6) here, which it returns without
+        // an expansion copy.
+        if (!PngImageDecoder.TryDecodeRgba8(img.Value.Png.Span, out var srcPixels, out var srcW, out var srcH))
             return null;
-        }
 
         // Scale so srcH (≈ strike.PpemY) → pixelsPerEm.
         var scale = pixelsPerEm / strike.PpemY;

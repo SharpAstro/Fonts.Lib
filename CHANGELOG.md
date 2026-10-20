@@ -6,6 +6,16 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.14
+
+A CBDT colour glyph is decoded through SharpAstro.Png 3.17's `PngImageDecoder.TryDecodeRgba8`
+(SharpAstro/Codecs#32).
+  * An RGBA8 glyph bitmap (what CBDT fonts carry) is no longer copied once more after decoding:
+    the decoded samples are already RGBA8 and are used as they are.
+  * A glyph the decoder rejects is skipped as before, now through a false return instead of a
+    caught exception.
+  * The `SharpAstro.Png` floor moves from 3.14 to 3.17.
+
 ## 1.13
 
 A CFF or Type 1 glyph with a counter (a, e, o, d, ...) no longer draws thinner than its
