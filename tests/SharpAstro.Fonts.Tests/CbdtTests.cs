@@ -19,6 +19,21 @@ public class CbdtTests
     }
 
     [Fact]
+    public void NotoColorEmoji_HasNoOutlines_AndAnOutlineRenderIsEmptyNotAThrow()
+    {
+        // A caller that falls back to the outline for a glyph whose bitmap it could not use got NotSupportedException,
+        // which took down a whole frame of pilot's GUI on Linux (2026-10-25).
+        var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.NotoColorEmoji));
+        font.HasOutlines.ShouldBeFalse();
+        var gid = font.GetGlyphId(0x1F600);
+
+        font.RenderGlyph(gid, 16f).IsEmpty.ShouldBeTrue();
+        font.RenderGlyphHinted(gid, 16f).IsEmpty.ShouldBeTrue();
+        font.RenderSdf(gid, 16f).IsEmpty.ShouldBeTrue();
+        font.RenderMtsdf(gid, 16f).IsEmpty.ShouldBeTrue();
+    }
+
+    [Fact]
     public void NotoColorEmoji_PickStrike_PrefersClosestUp()
     {
         var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.NotoColorEmoji));
@@ -31,6 +46,7 @@ public class CbdtTests
     [InlineData(0x1F600)] // 😀 grinning face
     [InlineData(0x1F525)] // 🔥 fire
     [InlineData(0x1F534)] // 🔴 red circle
+    [InlineData(0x1F6D1)] // 🛑 stop sign: a 4-bit indexed PNG, which SharpAstro.Png refused before 3.23
     public void NotoColorEmoji_RenderColor_ProducesNonEmpty(int codepoint)
     {
         var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.NotoColorEmoji));

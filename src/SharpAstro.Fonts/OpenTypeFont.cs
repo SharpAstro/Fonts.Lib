@@ -126,6 +126,13 @@ public sealed class OpenTypeFont
     /// <summary>True if this font carries CBDT/CBLC color bitmap glyphs.</summary>
     public bool HasColorBitmaps => Cbdt is not null && Cblc is not null;
 
+    /// <summary>
+    /// Whether the font has glyph outlines ('glyf' or 'CFF '). A bitmap-only colour font (Noto Color Emoji is CBDT and
+    /// nothing else) has none: its glyphs are only its bitmaps, and <see cref="RenderGlyph"/> and the distance fields
+    /// render an empty glyph for it rather than throw, as a glyph with no outline does.
+    /// </summary>
+    public bool HasOutlines => Cff is not null || Glyf is not null;
+
     /// <summary>True if this font is variable (has an 'fvar' table).</summary>
     public bool IsVariable => Fvar is not null;
 
@@ -534,9 +541,14 @@ public sealed class OpenTypeFont
     /// Rasterize a glyph to an 8-bit grayscale alpha bitmap at
     /// <paramref name="pixelsPerEm"/>. Works for both TrueType and CFF.
     /// </summary>
+    /// <remarks>
+    /// Empty for a font with no outlines (<see cref="HasOutlines"/>): a caller that asks a bitmap-only colour font for a
+    /// glyph its bitmaps lack gets nothing to draw, not an exception that takes down the whole frame (pilot's GUI on Linux,
+    /// 2026-10-25, on Noto Color Emoji's U+1F6D1, whose 4-bit PNG SharpAstro.Png could not decode).
+    /// </remarks>
     public GlyphBitmap RenderGlyph(uint glyphId, float pixelsPerEm,
         int subSamples = SmoothRasterizer.DefaultSubSamples)
-        => SmoothRasterizer.Rasterize(
+        => !HasOutlines ? GlyphBitmap.Empty : SmoothRasterizer.Rasterize(
             sink => DrawGlyph(glyphId, sink),
             pixelsPerEm, UnitsPerEm, subSamples);
 
@@ -588,7 +600,7 @@ public sealed class OpenTypeFont
     /// the outline is empty.
     /// </summary>
     public SdfBitmap RenderSdf(uint glyphId, float pixelsPerEm, float spread = 4f)
-        => SdfRasterizer.RasterizeAuto(
+        => !HasOutlines ? SdfBitmap.Empty : SdfRasterizer.RasterizeAuto(
             sink => DrawGlyph(glyphId, sink),
             pixelsPerEm, UnitsPerEm, spread);
 
@@ -604,7 +616,7 @@ public sealed class OpenTypeFont
     /// outlines both go through it (see <see cref="MsdfRasterizer"/>).
     /// </summary>
     public MtsdfBitmap RenderMtsdf(uint glyphId, float pixelsPerEm, float spread = 4f)
-        => MsdfRasterizer.RasterizeAuto(
+        => !HasOutlines ? MtsdfBitmap.Empty : MsdfRasterizer.RasterizeAuto(
             sink => DrawGlyph(glyphId, sink),
             pixelsPerEm, UnitsPerEm, spread);
 
