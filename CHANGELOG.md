@@ -6,6 +6,17 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.15
+
+A font with no outlines renders an empty glyph instead of throwing, and CBDT glyphs stored as sub-byte PNGs decode.
+  * New `OpenTypeFont.HasOutlines`: whether the font has 'glyf' or 'CFF '. A bitmap-only colour font (Noto Color Emoji
+    is CBDT and nothing else) has none.
+  * `RenderGlyph`, `RenderGlyphHinted`, `RenderSdf` and `RenderMtsdf` return their empty bitmap for such a font. They threw
+    `NotSupportedException` from `DrawGlyph`, so a caller that fell back to the outline for a glyph whose bitmap it
+    could not use lost the whole frame (pilot's GUI on Linux, 2026-10-25). `DrawGlyph` itself still throws.
+  * The `SharpAstro.Png` floor moves from 3.17 to 3.23, which decodes 1-, 2- and 4-bit indexed PNGs
+    (SharpAstro/Codecs#44). Noto Color Emoji's U+1F6D1 is one, and it now renders in colour.
+
 ## 1.14
 
 A CBDT colour glyph is decoded through SharpAstro.Png 3.17's `PngImageDecoder.TryDecodeRgba8`
