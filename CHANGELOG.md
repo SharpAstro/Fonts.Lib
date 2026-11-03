@@ -6,6 +6,16 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.16
+
+An 'OTTO' face with no 'head' or 'maxp' loads, with both derived from its CFF.
+  * PDF producers embed a simple font's `/FontFile3 /OpenType` program as a wrapper holding only 'CFF ' and 'cmap'.
+    `OpenTypeFont.Load` threw `Missing required 'head' table.` for it, so a reader sent every glyph to a substitute
+    face: on a Toronto visitors' map all 33 such subsets drew as unrelated characters.
+  * The CFF already says what those tables would (units per em, bounding box, glyph count), exactly as for a bare
+    CFF program; the wrapper's own 'cmap', 'hhea' and 'hmtx' are kept when present.
+  * A TrueType face missing either table is still refused: its outlines cannot be read without them.
+
 ## 1.15
 
 A font with no outlines renders an empty glyph instead of throwing, and CBDT glyphs stored as sub-byte PNGs decode.

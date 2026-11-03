@@ -733,14 +733,51 @@ public sealed class OpenTypeFont
             normalizedCoords: Array.Empty<float>(), vhea: null, vmtx: null, math: null);
     }
 
+    /// <summary>
+    /// An 'OTTO' face missing 'head' or 'maxp': both are derived from the CFF, as for a bare
+    /// CFF program (<see cref="LoadBareCff"/>), and the wrapper's own 'cmap', 'hhea' and 'hmtx'
+    /// are kept when it has them.
+    /// </summary>
+    private static OpenTypeFont LoadCffWrapperWithoutHead(ReadOnlyMemory<byte> data, SfntDirectory dir, TableRecord cffRec)
+    {
+        var span = data.Span;
+        var cff = CffTable.Parse(data.Slice((int)cffRec.Offset, (int)cffRec.Length));
+        var bb = cff.FontBBox;
+        var head = HeadTable.ForCff(cff.UnitsPerEm, bb[0], bb[1], bb[2], bb[3]);
+        var maxp = MaxpTable.ForCff((ushort)cff.NumGlyphs);
+        CmapTable? cmap = dir.TryGet(Tags.Cmap, out var cmapRec) ? CmapTable.Parse(cmapRec.Slice(span)) : null;
+        HheaTable? hhea = null;
+        HmtxTable? hmtx = null;
+        if (dir.TryGet(Tags.Hhea, out var hheaRec))
+        {
+            hhea = HheaTable.Parse(hheaRec.Slice(span));
+            if (dir.TryGet(Tags.Hmtx, out var hmtxRec))
+                hmtx = HmtxTable.Parse(hmtxRec.Slice(span), hhea.NumberOfHMetrics, maxp.NumGlyphs);
+        }
+        return new OpenTypeFont(data, dir, head, maxp,
+            cmap: cmap, hhea: hhea, hmtx: hmtx, loca: null, glyf: null,
+            cff: cff, colr: null, cpal: null, cblc: null, cbdt: null,
+            fvar: null, avar: null, gvar: null, hvar: null, mvar: null, vvar: null, cvar: null,
+            kern: null, gpos: null, cvtFunits: null, fpgm: null, prep: null,
+            normalizedCoords: Array.Empty<float>(), vhea: null, vmtx: null, math: null);
+    }
+
     private static OpenTypeFont LoadAtOffset(ReadOnlyMemory<byte> data, int faceOffset)
     {
         var span = data.Span;
         var dir = SfntDirectory.Parse(span, faceOffset);
 
-        if (!dir.TryGet(Tags.Head, out var headRec))
+        var hasHead = dir.TryGet(Tags.Head, out var headRec);
+        var hasMaxp = dir.TryGet(Tags.Maxp, out var maxpRec);
+        // A CFF-flavoured wrapper without 'head' or 'maxp' still carries a whole font: the CFF
+        // holds everything those two say. PDF producers write such wrappers as the /FontFile3
+        // /OpenType of a simple font, keeping only 'CFF ' and 'cmap' (a Toronto visitors' map
+        // embeds 33 subsets that way), and refusing them dropped every glyph to a substitute.
+        if (!(hasHead && hasMaxp) && dir.IsCff && dir.TryGet(Tags.Cff, out var wrappedCffRec))
+            return LoadCffWrapperWithoutHead(data, dir, wrappedCffRec);
+        if (!hasHead)
             throw new InvalidDataException("Missing required 'head' table.");
-        if (!dir.TryGet(Tags.Maxp, out var maxpRec))
+        if (!hasMaxp)
             throw new InvalidDataException("Missing required 'maxp' table.");
         // cmap is optional: PDF embedded subset fonts (Identity-H encoding)
         // routinely strip the cmap because CIDs map directly to GIDs and Unicode
