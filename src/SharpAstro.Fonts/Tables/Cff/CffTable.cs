@@ -58,11 +58,19 @@ internal sealed class CffTable
     // idempotent and the loser's map is simply collected.
     private Dictionary<string, uint>? _nameToGid;
 
+    // The built-in encoding (Top DICT op 16): where it is, in the program it was read from, and the code→GID
+    // table built from it on first GidForCode call (published lock-free, like the name map).
+    private readonly ReadOnlyMemory<byte> _cffData;
+    private readonly int _encodingOffset;
+    private uint[]? _codeToGid;
+
     private CffTable(bool isCff2, CffDict topDict, CffIndex globalSubrs,
         CffIndex charStrings, bool isCidKeyed, CffFdSelect? fdSelect,
         CffPrivateDict[] privateDicts, ushort unitsPerEm, short[] fontBBox,
-        CffCharset? charset, CffIndex strings)
+        CffCharset? charset, CffIndex strings, ReadOnlyMemory<byte> cffData = default, int encodingOffset = 0)
     {
+        _cffData = cffData;
+        _encodingOffset = encodingOffset;
         IsCff2 = isCff2;
         TopDict = topDict;
         GlobalSubrs = globalSubrs;
@@ -112,17 +120,101 @@ internal sealed class CffTable
         {
             // No charset operator = the predefined ISOAdobe charset, which is SID == GID.
             var sid = Charset?.GetSid((uint)gid) ?? (ushort)gid;
-            string name;
-            if (sid < CffStandardStrings.Count)
-                name = CffStandardStrings.Get(sid);
-            else if (sid - CffStandardStrings.Count < _strings.Count)
-                name = System.Text.Encoding.Latin1.GetString(_strings.GetObject(sid - CffStandardStrings.Count));
-            else
-                continue;
+            if (NameOfSid(sid) is not { } name) continue;
             map.TryAdd(name, (uint)gid); // first wins on (spec-illegal) duplicate names
         }
         System.Threading.Interlocked.CompareExchange(ref _nameToGid, map, null);
         return _nameToGid;
+    }
+
+    private string? NameOfSid(int sid)
+    {
+        if (sid < CffStandardStrings.Count) return CffStandardStrings.Get(sid);
+        if (sid - CffStandardStrings.Count < _strings.Count)
+            return System.Text.Encoding.Latin1.GetString(_strings.GetObject(sid - CffStandardStrings.Count));
+        return null;
+    }
+
+    /// <summary>
+    /// Glyph id the font's OWN encoding (Top DICT <c>Encoding</c>, CFF spec §12) assigns to the one-byte
+    /// <paramref name="code"/>, or 0. This is what a PDF simple font with no <c>/Encoding</c> selects by: ISO 32000
+    /// §9.6.5 sends a symbolic Type 1 font's codes through its built-in encoding, and a TeX math subset (MathDesign,
+    /// CMSY) carries a custom one whose codes are not glyph indices. Taking the code as the index instead drew
+    /// <c>bardbl</c> for every bullet and nothing for <c>(</c>, <c>=</c> or <c>∈</c>. With no Encoding operator the
+    /// font's encoding is StandardEncoding; the Expert encoding is not mapped. Name-keyed fonts only.
+    /// </summary>
+    public uint GidForCode(uint code)
+    {
+        if (IsCidKeyed || code > 255) return 0u;
+        var map = _codeToGid ?? BuildCodeToGid();
+        return map[code];
+    }
+
+    private uint[] BuildCodeToGid()
+    {
+        var map = new uint[256];
+        if (_encodingOffset == 0)
+        {
+            for (var code = 0; code < 256; code++)
+            {
+                var name = Outlines.AdobeStandardEncoding.NameOf(code);
+                if (name != ".notdef") map[code] = GidForName(name);
+            }
+        }
+        else if (_encodingOffset > 1 && _encodingOffset < _cffData.Length)
+        {
+            ParseCustomEncoding(_cffData.Span, _encodingOffset, map);
+        }
+        System.Threading.Interlocked.CompareExchange(ref _codeToGid, map, null);
+        return _codeToGid;
+    }
+
+    // Format 0 lists a code per glyph from GID 1, format 1 runs of consecutive codes; the high bit of the format
+    // adds supplements, further codes for glyphs named by SID. A table that runs off the end stops where it does.
+    private void ParseCustomEncoding(ReadOnlySpan<byte> data, int offset, uint[] map)
+    {
+        var p = offset;
+        if (p >= data.Length) return;
+        var format = data[p++];
+        var gid = 1u;
+        var glyphs = (uint)CharStrings.Count;
+        switch (format & 0x7F)
+        {
+            case 0:
+            {
+                if (p >= data.Length) return;
+                var nCodes = data[p++];
+                for (var i = 0; i < nCodes && p < data.Length; i++, gid++)
+                {
+                    var code = data[p++];
+                    if (gid < glyphs) map[code] = gid;
+                }
+                break;
+            }
+            case 1:
+            {
+                if (p >= data.Length) return;
+                var nRanges = data[p++];
+                for (var r = 0; r < nRanges && p + 1 < data.Length; r++)
+                {
+                    int first = data[p++], nLeft = data[p++];
+                    for (var code = first; code <= first + nLeft && code < 256; code++, gid++)
+                        if (gid < glyphs) map[code] = gid;
+                }
+                break;
+            }
+            default:
+                return;
+        }
+        if ((format & 0x80) == 0 || p >= data.Length) return;
+        var nSups = data[p++];
+        for (var s = 0; s < nSups && p + 2 < data.Length; s++)
+        {
+            var code = data[p];
+            var sid = (data[p + 1] << 8) | data[p + 2];
+            p += 3;
+            if (NameOfSid(sid) is { } name && GidForName(name) is var g and not 0) map[code] = g;
+        }
     }
 
     /// <summary>Pick the Private DICT applicable to <paramref name="gid"/>.</summary>
@@ -233,8 +325,12 @@ internal sealed class CffTable
         if (charsetOff > 2)
             charset = CffCharset.Parse(span, charsetOff, numGlyphs);
 
+        // Encoding (op 16): 0 = StandardEncoding (also the default), 1 = Expert, else the offset of a custom one.
+        // A CID-keyed font has none.
+        var encodingOff = isCid ? 0 : (int)topDict.GetSingleOr(TopDictOps.Encoding, 0);
+
         return new CffTable(isCff2: false, topDict, globalSubrs, charStrings,
-            isCidKeyed: isCid, fdSelect, privates, upem, bbox, charset, stringIndex);
+            isCidKeyed: isCid, fdSelect, privates, upem, bbox, charset, stringIndex, cffData, encodingOff);
     }
 
     private static CffPrivateDict ParsePrivate(ReadOnlyMemory<byte> cff, CffDict parentDict)
@@ -262,12 +358,27 @@ internal sealed class CffTable
     /// Interpret the charstring for <paramref name="gid"/>, emitting outline
     /// commands to <paramref name="sink"/>.
     /// </summary>
-    public void DrawGlyph(uint gid, IGlyphSink sink)
+    public void DrawGlyph(uint gid, IGlyphSink sink) => DrawGlyph(gid, sink, composite: true);
+
+    // A composite's base and accent are drawn as plain glyphs: the spec forbids nesting composites, and refusing
+    // to keeps a malformed font (a composite naming itself) from recursing without end.
+    private void DrawGlyph(uint gid, IGlyphSink sink, bool composite)
     {
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(gid, (uint)CharStrings.Count);
         var cs = CharStrings.GetObjectMemory((int)gid);
         var priv = GetPrivateForGid(gid);
-        Type2CharstringInterpreter.Execute(cs, GlobalSubrs, priv.LocalSubrs, sink);
+        Type2CharstringInterpreter.Execute(cs, GlobalSubrs, priv.LocalSubrs, sink,
+            composite ? (adx, ady, baseCode, accentCode) => DrawComposite(sink, adx, ady, baseCode, accentCode) : null);
+    }
+
+    // The base and accent are named by StandardEncoding codes, whatever the font's encoding, and found by name in
+    // the charset; a CID-keyed font has no names and so no composites.
+    private void DrawComposite(IGlyphSink sink, float adx, float ady, int baseCode, int accentCode)
+    {
+        var baseGid = GidForName(AdobeStandardEncoding.NameOf(baseCode));
+        var accentGid = GidForName(AdobeStandardEncoding.NameOf(accentCode));
+        if (baseGid != 0) DrawGlyph(baseGid, sink, composite: false);
+        if (accentGid != 0) DrawGlyph(accentGid, new TranslatingGlyphSink(sink, adx, ady), composite: false);
     }
 }
 

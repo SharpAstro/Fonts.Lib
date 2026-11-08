@@ -219,8 +219,10 @@ internal sealed class Type1CharstringInterpreter
                 _sp = 0;
                 break;
             case 6:  // seac (asb adx ady bchar achar)
+                // The accent draws from its own hsbw sidebearing, so its origin moves by adx - asb (Type 1 Font
+                // Format §6.4, as FreeType's t1_decoder places it); passing adx alone set it asb too far right.
                 if (_seac is not null && _sp >= 5)
-                    _seac((int)_stack[1], (int)_stack[2],
+                    _seac((int)(_stack[1] - _stack[0]), (int)_stack[2],
                           GlyphNameLookup((int)_stack[3]),
                           GlyphNameLookup((int)_stack[4]));
                 _terminated = true; // seac always terminates the current charstring
@@ -365,21 +367,7 @@ internal sealed class Type1CharstringInterpreter
     }
 
     /// <summary>Adobe Standard Encoding glyph-name lookup for seac base/accent indices.</summary>
-    private static string GlyphNameLookup(int code) => code switch
-    {
-        // seac uses Adobe Standard Encoding indices for the accent + base.
-        // Full table not needed here — caller will fall back to ".notdef"
-        // for unknowns. We can extend this in a follow-up.
-        65 => "A", 66 => "B", 67 => "C", 68 => "D", 69 => "E", 70 => "F",
-        71 => "G", 72 => "H", 73 => "I", 74 => "J", 75 => "K", 76 => "L",
-        77 => "M", 78 => "N", 79 => "O", 80 => "P", 81 => "Q", 82 => "R",
-        83 => "S", 84 => "T", 85 => "U", 86 => "V", 87 => "W", 88 => "X",
-        89 => "Y", 90 => "Z",
-        97 => "a", 98 => "b", 99 => "c", 100 => "d", 101 => "e", 102 => "f",
-        103 => "g", 104 => "h", 105 => "i", 106 => "j", 107 => "k", 108 => "l",
-        109 => "m", 110 => "n", 111 => "o", 112 => "p", 113 => "q", 114 => "r",
-        115 => "s", 116 => "t", 117 => "u", 118 => "v", 119 => "w", 120 => "x",
-        121 => "y", 122 => "z",
-        _ => ".notdef",
-    };
+    // seac uses Adobe Standard Encoding indices for the accent + base. This held the letters alone, so every
+    // accent (dieresis 200, acute 194, grave 193, ...) read as .notdef and a composite drew its base bare.
+    private static string GlyphNameLookup(int code) => AdobeStandardEncoding.NameOf(code);
 }

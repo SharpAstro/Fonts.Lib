@@ -6,6 +6,28 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.17
+
+Three CFF fixes that together decide whether an embedded Type1C subset draws the right glyphs at all.
+  * The Type 2 two-byte operators are drawn instead of skipped. `flex`, `hflex`, `hflex1` and `flex1` (Adobe TN #5177
+    §4.1) are two curves that move the pen; skipped as "vanishingly rare", which they are not in any CFF converted
+    from Type 1, they drew the rest of the glyph displaced by their travel: a Manning book's NewBaskerville subsets
+    drew their capitals and half their lowercase as smears. The arithmetic, logic, stack and transient-array
+    operators (§4.3-4.4) now leave their results on the stack, where they cleared it. `random` returns a fixed 0.5,
+    so a glyph draws the same every time.
+  * Accented composites draw. A Type 2 `endchar` with four operands (`adx ady bchar achar`, Appendix C) is the Type 1
+    `seac`: the base glyph and the accent, named by StandardEncoding codes, the accent moved by (adx, ady). The
+    operands were dropped, so a German subset's ä, ö and ü drew nothing. The Type 1 interpreter's own `seac` named
+    letters only, so every accent was `.notdef`; both now share one complete StandardEncoding table, and the Type 1
+    accent is placed at `adx - asb` as the spec and FreeType place it.
+  * New `CffTable.GidForCode`: the glyph a name-keyed CFF's built-in encoding (Top DICT `Encoding`: StandardEncoding
+    by default, or a custom format 0 or 1 with supplements) gives a one-byte code. `OpenTypeFont.GetGlyphId` asks it
+    for a bare CFF under `GlyphMapHint.EmbeddedSubset` before taking the code as the glyph index. A PDF symbolic font
+    with no `/Encoding` selects through it (ISO 32000 §9.6.5); a TeX math subset's codes are not indices, and a
+    homework sheet drew `bardbl` for every bullet and nothing for `(`, `=` or `∈`.
+  * Outlines and glyph choices change for the fonts affected, so a consumer that caches rendered glyphs should
+    invalidate them.
+
 ## 1.16
 
 An 'OTTO' face with no 'head' or 'maxp' loads, with both derived from its CFF.

@@ -403,6 +403,11 @@ public sealed class OpenTypeFont
             // numGlyphs, but its cmap-subtable returns are unchecked — re-gate here
             // so a bogus subset cmap can't surface an out-of-range id either.
             return ValidGid(Cmap.GetGlyphIdHinted(codepoint, charCode, hint, NumGlyphs));
+        // A bare name-keyed CFF (a PDF /FontFile3 /Type1C) has no cmap: its own encoding is what maps a
+        // subset's codes. Only where that misses is the code taken as the glyph index.
+        if (Cff is { IsCidKeyed: false } nameCff && hint is GlyphMapHint.EmbeddedSubset
+            && nameCff.GidForCode(charCode) is var encoded and not 0)
+            return ValidGid(encoded);
         // PDF Identity-H subset whose cmap was stripped (CID==GID, Unicode lookup
         // comes from the PDF's /ToUnicode). Honour the hint without a cmap.
         return hint switch

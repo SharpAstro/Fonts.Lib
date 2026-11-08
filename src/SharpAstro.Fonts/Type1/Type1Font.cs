@@ -70,13 +70,11 @@ public sealed class Type1Font
             {
                 // Draw base directly.
                 if (HasGlyph(baseChar)) DrawGlyph(baseChar, sink);
-                // Draw accent at the offset; we don't have a sink-translating
-                // helper here so consumers wanting accurate seac should wrap
-                // the sink themselves. For Phase 9 v1 we ignore the accent
-                // offset (most fonts don't use seac).
+                // Draw the accent moved by the composite's offset (the interpreter has already taken the
+                // accent's sidebearing out of it).
                 if (accentChar != baseChar && HasGlyph(accentChar))
                 {
-                    var translated = new TranslatingSink(sink, adx, ady);
+                    var translated = new TranslatingGlyphSink(sink, adx, ady);
                     DrawGlyph(accentChar, translated);
                 }
             });
@@ -188,23 +186,4 @@ public sealed class Type1Font
 
     /// <summary>Convenience: load a .pfb from disk.</summary>
     public static Type1Font LoadPfbFromFile(string path) => LoadPfb(File.ReadAllBytes(path));
-
-    /// <summary>Translate every coordinate by (dx, dy) — used for seac accent offset.</summary>
-    private sealed class TranslatingSink : IGlyphSink
-    {
-        private readonly IGlyphSink _inner;
-        private readonly float _dx;
-        private readonly float _dy;
-        public TranslatingSink(IGlyphSink inner, float dx, float dy)
-        { _inner = inner; _dx = dx; _dy = dy; }
-        public void MoveTo(float x, float y) => _inner.MoveTo(x + _dx, y + _dy);
-        public void LineTo(float x, float y) => _inner.LineTo(x + _dx, y + _dy);
-        public void QuadTo(float cx, float cy, float x, float y)
-            => _inner.QuadTo(cx + _dx, cy + _dy, x + _dx, y + _dy);
-        public void CubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
-            => _inner.CubicTo(c1x + _dx, c1y + _dy, c2x + _dx, c2y + _dy, x + _dx, y + _dy);
-        public void Close() => _inner.Close();
-        // Vector2 ref for parity with the COLR transform (unused here).
-        private static Vector2 _ = Vector2.Zero;
-    }
 }
