@@ -35,18 +35,14 @@ public enum LineJoin
 ///
 /// <para>Strategy: collect all input segments, flatten curves to line segments
 /// via the same recursive midpoint subdivision used by
-/// <see cref="SmoothRasterizer"/>, then for each open/closed polyline build
-/// the left and right offset polygons, apply end-caps, and emit them as
-/// closed filled contours to the output sink.</para>
+/// <see cref="SmoothRasterizer"/>, then emit the stroke as a union of convex
+/// pieces (a rectangle a segment, a piece a corner, a piece an open end), all
+/// wound the same way. The output MUST be filled non-zero: the pieces overlap.</para>
 ///
 /// <para>Stateless — every call allocates its own scratch. Thread-safe.</para>
 /// </summary>
 internal static class OutlineStroker
 {
-    // Number of arc segments per full turn when approximating round caps/joins
-    // with line segments. 24 gives a good quality/cost trade-off.
-    private const int ArcSegments = 24;
-
     /// <summary>
     /// Stroke the path described by <paramref name="drawTo"/> and emit the
     /// resulting filled outline to <paramref name="output"/>.
@@ -77,406 +73,205 @@ internal static class OutlineStroker
 
         var halfW = lineWidth * 0.5f;
 
-        // Step 2 – stroke each contour.
+        // Step 2 – stroke each contour as a UNION of simple convex pieces: a rectangle for every segment, a piece
+        // for every corner and a piece for every open end. Each piece is emitted with the same orientation, so a
+        // non-zero fill of all of them together is the stroke. Nothing has to work out where the two sides of the
+        // stroke cross themselves on the inside of a corner, which is where an offset-curve stroker goes wrong.
+        var points = new List<(float X, float Y)>();
         foreach (var contour in contours)
         {
-            var pts = contour.Points;
+            // Drop zero-length segments: they have no direction to offset along.
+            points.Clear();
+            foreach (var point in contour.Points)
+            {
+                if (points.Count == 0 || MathF.Abs(point.X - points[^1].X) > 1e-6f || MathF.Abs(point.Y - points[^1].Y) > 1e-6f)
+                    points.Add(point);
+            }
             var closed = contour.Closed;
-            var n = pts.Count;
+            if (closed && points.Count > 1 && MathF.Abs(points[0].X - points[^1].X) <= 1e-6f && MathF.Abs(points[0].Y - points[^1].Y) <= 1e-6f)
+                points.RemoveAt(points.Count - 1);
 
-            if (n < 2) continue; // degenerate — nothing to stroke
+            var n = points.Count;
+            if (n == 0) continue;
+            if (n == 1)
+            {
+                // A subpath that goes nowhere still shows its caps: a dot, or a square.
+                if (cap == LineCap.Round) EmitArc(points[0], halfW, 0f, MathF.PI * 2f, withCentre: false, output);
+                else if (cap == LineCap.Square)
+                    EmitPolygon([(points[0].X - halfW, points[0].Y - halfW), (points[0].X + halfW, points[0].Y - halfW),
+                        (points[0].X + halfW, points[0].Y + halfW), (points[0].X - halfW, points[0].Y + halfW)], output);
+                continue;
+            }
 
-            if (closed)
-                StrokeClosed(pts, halfW, join, miterLimit, output);
-            else
-                StrokeOpen(pts, halfW, cap, join, miterLimit, output);
+            var segments = closed ? n : n - 1;
+            for (var k = 0; k < segments; k++)
+            {
+                var a = points[k];
+                var b = points[(k + 1) % n];
+                Direction(a, b, out var dx, out var dy);
+                var ox = -dy * halfW;
+                var oy = dx * halfW;
+                EmitPolygon([(a.X + ox, a.Y + oy), (b.X + ox, b.Y + oy), (b.X - ox, b.Y - oy), (a.X - ox, a.Y - oy)], output);
+
+                // The corner at the END of this segment, unless that is an open end.
+                if (!closed && k == segments - 1) break;
+                var c = points[(k + 2) % n];
+                Direction(b, c, out var ex, out var ey);
+                EmitJoin(b, dx, dy, ex, ey, halfW, join, miterLimit, output);
+            }
+
+            if (!closed)
+            {
+                Direction(points[1], points[0], out var sx, out var sy);            // pointing out of the start
+                EmitCap(points[0], sx, sy, halfW, cap, output);
+                Direction(points[n - 2], points[n - 1], out var tx, out var ty);    // pointing out of the end
+                EmitCap(points[n - 1], tx, ty, halfW, cap, output);
+            }
         }
     }
 
-    // ── Closed polyline stroking ──────────────────────────────────────────────
+    // ── Pieces ────────────────────────────────────────────────────────────────
 
-    private static void StrokeClosed(
-        List<(float X, float Y)> pts,
-        float halfW,
-        LineJoin join,
-        float miterLimit,
-        IGlyphSink output)
+    /// <summary>How far an arc piece may be from the arc it stands for, in the path's units.</summary>
+    private const float ArcTolerance = 0.05f;
+
+    private static void Direction((float X, float Y) from, (float X, float Y) to, out float dx, out float dy)
     {
-        // Build left (outer at winding >0) and right (inner) offset polylines.
-        // Both lists end up as closed loops.
-        var left  = new List<(float X, float Y)>();
-        var right = new List<(float X, float Y)>();
-
-        var n = pts.Count;
-        for (var i = 0; i < n; i++)
-        {
-            var prev = pts[(i - 1 + n) % n];
-            var curr = pts[i];
-            var next = pts[(i + 1) % n];
-
-            var dx0 = curr.X - prev.X;
-            var dy0 = curr.Y - prev.Y;
-            var dx1 = next.X - curr.X;
-            var dy1 = next.Y - curr.Y;
-
-            NormPerp(dx0, dy0, out var lx0, out var ly0);
-            NormPerp(dx1, dy1, out var lx1, out var ly1);
-
-            AddJoinPoints(
-                curr.X, curr.Y,
-                lx0, ly0, lx1, ly1,
-                halfW, join, miterLimit,
-                left, right);
-        }
-
-        // Emit left side as one closed contour, then right side reversed as
-        // another closed contour (so the two together form the stroke band).
-        EmitClosed(left, output);
-        right.Reverse();
-        EmitClosed(right, output);
+        dx = to.X - from.X;
+        dy = to.Y - from.Y;
+        var length = MathF.Sqrt(dx * dx + dy * dy);
+        if (length > 0f) { dx /= length; dy /= length; }
     }
-
-    // ── Open polyline stroking ────────────────────────────────────────────────
-
-    private static void StrokeOpen(
-        List<(float X, float Y)> pts,
-        float halfW,
-        LineCap cap,
-        LineJoin join,
-        float miterLimit,
-        IGlyphSink output)
-    {
-        // Walk forward along the left side of the polyline then backward along
-        // the right side, inserting caps at each end, to form one closed contour.
-        var n = pts.Count;
-        var outline = new List<(float X, float Y)>();
-
-        // ── Forward pass (left side) ──────────────────────────────────────────
-        for (var i = 0; i < n; i++)
-        {
-            var curr = pts[i];
-
-            if (i == 0)
-            {
-                // Start cap — left side.
-                var dx = pts[1].X - curr.X;
-                var dy = pts[1].Y - curr.Y;
-                NormPerp(dx, dy, out var px, out var py);
-                var lx = curr.X + px * halfW;
-                var ly = curr.Y + py * halfW;
-
-                switch (cap)
-                {
-                    case LineCap.Butt:
-                        outline.Add((lx, ly));
-                        break;
-
-                    case LineCap.Square:
-                        // Extend backward by halfW in the -direction of travel.
-                        var sqLen = MathF.Sqrt(dx * dx + dy * dy);
-                        float tx, ty;
-                        if (sqLen > 0f) { tx = dx / sqLen; ty = dy / sqLen; }
-                        else { tx = 0; ty = 0; }
-                        outline.Add((lx - tx * halfW, ly - ty * halfW));
-                        break;
-
-                    case LineCap.Round:
-                        // Semicircle from right (-perp) to left (+perp) around the start.
-                        AddArcPoints(curr.X, curr.Y, halfW,
-                            MathF.Atan2(-py, -px),  // start angle = -perp direction (right side)
-                            MathF.Atan2(py, px),     // end   angle = +perp direction (left  side)
-                            ccw: true,
-                            outline);
-                        break;
-                }
-            }
-            else if (i == n - 1)
-            {
-                // End cap — left side.
-                var dx = curr.X - pts[i - 1].X;
-                var dy = curr.Y - pts[i - 1].Y;
-                NormPerp(dx, dy, out var px, out var py);
-                var lx = curr.X + px * halfW;
-                var ly = curr.Y + py * halfW;
-
-                switch (cap)
-                {
-                    case LineCap.Butt:
-                        outline.Add((lx, ly));
-                        break;
-
-                    case LineCap.Square:
-                        var sqLen = MathF.Sqrt(dx * dx + dy * dy);
-                        float tx, ty;
-                        if (sqLen > 0f) { tx = dx / sqLen; ty = dy / sqLen; }
-                        else { tx = 0; ty = 0; }
-                        outline.Add((lx + tx * halfW, ly + ty * halfW));
-                        break;
-
-                    case LineCap.Round:
-                        // Semicircle from left side (+perp) to right side (-perp).
-                        AddArcPoints(curr.X, curr.Y, halfW,
-                            MathF.Atan2(py, px),
-                            MathF.Atan2(-py, -px),
-                            ccw: true,
-                            outline);
-                        break;
-                }
-            }
-            else
-            {
-                // Interior join — left side only.
-                var prev = pts[i - 1];
-                var next = pts[i + 1];
-
-                var dx0 = curr.X - prev.X;
-                var dy0 = curr.Y - prev.Y;
-                var dx1 = next.X - curr.X;
-                var dy1 = next.Y - curr.Y;
-
-                NormPerp(dx0, dy0, out var lx0, out var ly0);
-                NormPerp(dx1, dy1, out var lx1, out var ly1);
-
-                var leftPts  = new List<(float X, float Y)>();
-                var rightPts = new List<(float X, float Y)>();
-                AddJoinPoints(curr.X, curr.Y, lx0, ly0, lx1, ly1,
-                    halfW, join, miterLimit, leftPts, rightPts);
-
-                foreach (var p in leftPts) outline.Add(p);
-            }
-        }
-
-        // ── Backward pass (right side) ────────────────────────────────────────
-        for (var i = n - 1; i >= 0; i--)
-        {
-            var curr = pts[i];
-
-            if (i == n - 1)
-            {
-                // Transition from end-left to end-right already handled by the
-                // cap above.  For Butt/Square we need to add the right-side
-                // end point; for Round the arc already connected them.
-                if (cap != LineCap.Round)
-                {
-                    var dx = curr.X - pts[i - 1].X;
-                    var dy = curr.Y - pts[i - 1].Y;
-                    NormPerp(dx, dy, out var px, out var py);
-                    var rx = curr.X - px * halfW;
-                    var ry = curr.Y - py * halfW;
-
-                    if (cap == LineCap.Square)
-                    {
-                        var sqLen = MathF.Sqrt(dx * dx + dy * dy);
-                        float tx, ty;
-                        if (sqLen > 0f) { tx = dx / sqLen; ty = dy / sqLen; }
-                        else { tx = 0; ty = 0; }
-                        outline.Add((rx + tx * halfW, ry + ty * halfW));
-                    }
-                    else
-                    {
-                        outline.Add((rx, ry));
-                    }
-                }
-            }
-            else if (i == 0)
-            {
-                // Transition from start-right back to start-left; for Butt/Square
-                // we close with the right-side start point.
-                if (cap != LineCap.Round)
-                {
-                    var dx = pts[1].X - curr.X;
-                    var dy = pts[1].Y - curr.Y;
-                    NormPerp(dx, dy, out var px, out var py);
-                    var rx = curr.X - px * halfW;
-                    var ry = curr.Y - py * halfW;
-
-                    if (cap == LineCap.Square)
-                    {
-                        var sqLen = MathF.Sqrt(dx * dx + dy * dy);
-                        float tx, ty;
-                        if (sqLen > 0f) { tx = dx / sqLen; ty = dy / sqLen; }
-                        else { tx = 0; ty = 0; }
-                        outline.Add((rx - tx * halfW, ry - ty * halfW));
-                    }
-                    else
-                    {
-                        outline.Add((rx, ry));
-                    }
-                }
-            }
-            else
-            {
-                // Interior join — right side (perpendicular reversed).
-                var prev = pts[i + 1]; // "previous" in backward traversal = next in forward
-                var next = pts[i - 1];
-
-                // In backward traversal the segment directions are reversed.
-                var dx0 = curr.X - prev.X;
-                var dy0 = curr.Y - prev.Y;
-                var dx1 = next.X - curr.X;
-                var dy1 = next.Y - curr.Y;
-
-                NormPerp(dx0, dy0, out var lx0, out var ly0);
-                NormPerp(dx1, dy1, out var lx1, out var ly1);
-
-                var leftPts  = new List<(float X, float Y)>();
-                var rightPts = new List<(float X, float Y)>();
-                AddJoinPoints(curr.X, curr.Y, lx0, ly0, lx1, ly1,
-                    halfW, join, miterLimit, leftPts, rightPts);
-
-                foreach (var p in leftPts) outline.Add(p);
-            }
-        }
-
-        EmitClosed(outline, output);
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Compute join geometry at a vertex. The left offset polygon receives
-    /// points from <paramref name="left"/>, the right polygon from
-    /// <paramref name="right"/>.
+    /// The piece that fills the outside of a corner at <paramref name="v"/>, between a segment arriving along
+    /// (<paramref name="dx0"/>, <paramref name="dy0"/>) and one leaving along (<paramref name="dx1"/>, <paramref name="dy1"/>).
     /// </summary>
-    private static void AddJoinPoints(
-        float cx, float cy,
-        float lx0, float ly0,   // unit left-normal of incoming segment
-        float lx1, float ly1,   // unit left-normal of outgoing segment
-        float halfW,
-        LineJoin join,
-        float miterLimit,
-        List<(float X, float Y)> left,
-        List<(float X, float Y)> right)
+    private static void EmitJoin((float X, float Y) v, float dx0, float dy0, float dx1, float dy1,
+        float halfW, LineJoin join, float miterLimit, IGlyphSink output)
     {
-        // Cross product to determine which side is the outer turn.
-        var cross = lx0 * ly1 - ly0 * lx1;
-
-        // Average (bisector) direction.
-        var bx = lx0 + lx1;
-        var by = ly0 + ly1;
-        var bLen = MathF.Sqrt(bx * bx + by * by);
-        float sinHalf;  // sin of half the interior angle
-        if (bLen < 1e-6f)
+        var cross = dx0 * dy1 - dy0 * dx1;
+        var dot = dx0 * dx1 + dy0 * dy1;
+        if (MathF.Abs(cross) < 1e-6f)
         {
-            // 180° turn — degenerate; use incoming normal only.
-            sinHalf = 1f;
-            bx = lx0; by = ly0; bLen = 1f;
+            // Straight on needs nothing. Doubling back has no outside to speak of, except that a round join is a
+            // full half disc there.
+            if (dot < 0f && join == LineJoin.Round) EmitArc(v, halfW, 0f, MathF.PI * 2f, withCentre: false, output);
+            return;
+        }
+
+        // The outside of the corner is on the side the path turns away from.
+        var side = cross > 0f ? -1f : 1f;
+        var ox0 = -dy0 * halfW * side;
+        var oy0 = dx0 * halfW * side;
+        var ox1 = -dy1 * halfW * side;
+        var oy1 = dx1 * halfW * side;
+
+        if (join == LineJoin.Round)
+        {
+            var a0 = MathF.Atan2(oy0, ox0);
+            var sweep = MathF.Atan2(oy1, ox1) - a0;
+            // The short way round, which is the outside of the corner.
+            while (sweep > MathF.PI) sweep -= MathF.PI * 2f;
+            while (sweep < -MathF.PI) sweep += MathF.PI * 2f;
+            EmitArc(v, halfW, a0, sweep, withCentre: true, output);
+            return;
+        }
+
+        if (join == LineJoin.Miter)
+        {
+            // Miter length over stroke width is 1 / cos(half the turn) = sqrt(2 / (1 + cos turn)).
+            var ratio = MathF.Sqrt(2f / MathF.Max(1e-12f, 1f + dot));
+            if (ratio <= miterLimit)
+            {
+                var bx = ox0 + ox1;
+                var by = oy0 + oy1;
+                var length = MathF.Sqrt(bx * bx + by * by);
+                var tip = (v.X + bx / length * halfW * ratio, v.Y + by / length * halfW * ratio);
+                EmitPolygon([v, (v.X + ox0, v.Y + oy0), tip, (v.X + ox1, v.Y + oy1)], output);
+                return;
+            }
+        }
+
+        // Bevel, and a miter past its limit.
+        EmitPolygon([v, (v.X + ox0, v.Y + oy0), (v.X + ox1, v.Y + oy1)], output);
+    }
+
+    /// <summary>The piece beyond an open end at <paramref name="p"/>, where (<paramref name="dx"/>, <paramref name="dy"/>) points out of the path.</summary>
+    private static void EmitCap((float X, float Y) p, float dx, float dy, float halfW, LineCap cap, IGlyphSink output)
+    {
+        var ox = -dy * halfW;
+        var oy = dx * halfW;
+        if (cap == LineCap.Square)
+        {
+            EmitPolygon([(p.X + ox, p.Y + oy), (p.X + ox + dx * halfW, p.Y + oy + dy * halfW),
+                (p.X - ox + dx * halfW, p.Y - oy + dy * halfW), (p.X - ox, p.Y - oy)], output);
+        }
+        else if (cap == LineCap.Round)
+        {
+            // Half a disc on the outward side: from one side of the end, round by the outward direction, to the other.
+            var a0 = MathF.Atan2(oy, ox);
+            var outward = MathF.Atan2(dy, dx) - a0;
+            while (outward > MathF.PI) outward -= MathF.PI * 2f;
+            while (outward < -MathF.PI) outward += MathF.PI * 2f;
+            EmitArc(p, halfW, a0, outward > 0f ? MathF.PI : -MathF.PI, withCentre: false, output);
+        }
+    }
+
+    /// <summary>
+    /// A disc, or a slice of one with or without its centre, as a polygon cut finely enough to stay within
+    /// <see cref="ArcTolerance"/> of the arc.
+    /// </summary>
+    private static void EmitArc((float X, float Y) centre, float radius, float start, float sweep, bool withCentre, IGlyphSink output)
+    {
+        // A chord over an angle t is r (1 - cos(t / 2)) from its arc.
+        var step = radius > ArcTolerance ? 2f * MathF.Acos(1f - ArcTolerance / radius) : MathF.PI / 2f;
+        var steps = Math.Clamp((int)MathF.Ceiling(MathF.Abs(sweep) / step), 2, 720);
+        var full = MathF.Abs(sweep) >= MathF.PI * 2f - 1e-4f;
+        var polygon = new List<(float X, float Y)>(steps + 2);
+        if (withCentre && !full) polygon.Add(centre);
+        var count = full ? steps : steps + 1;
+        for (var k = 0; k < count; k++)
+        {
+            var a = start + sweep * k / steps;
+            polygon.Add((centre.X + MathF.Cos(a) * radius, centre.Y + MathF.Sin(a) * radius));
+        }
+        EmitPolygon(polygon, output);
+    }
+
+    /// <summary>
+    /// Emits a closed polygon, always wound the same way (positive signed area), whichever way its points were given.
+    /// That is what makes the pieces a union under a non-zero fill, in a y-up font and in a y-down picture alike.
+    /// </summary>
+    private static void EmitPolygon(List<(float X, float Y)> pts, IGlyphSink sink)
+    {
+        var n = pts.Count;
+        if (n < 3) return;
+        var area = 0f;
+        for (var k = 0; k < n; k++)
+        {
+            var a = pts[k];
+            var b = pts[(k + 1) % n];
+            area += a.X * b.Y - b.X * a.Y;
+        }
+        if (area == 0f) return;
+
+        if (area > 0f)
+        {
+            sink.MoveTo(pts[0].X, pts[0].Y);
+            for (var k = 1; k < n; k++) sink.LineTo(pts[k].X, pts[k].Y);
         }
         else
         {
-            // dot(bisector, lx0) = cos(half-angle), but we need its complement.
-            sinHalf = MathF.Abs(cross * 0.5f); // approximation good enough for miter limit
-            bx /= bLen; by /= bLen;
+            sink.MoveTo(pts[n - 1].X, pts[n - 1].Y);
+            for (var k = n - 2; k >= 0; k--) sink.LineTo(pts[k].X, pts[k].Y);
         }
-
-        // Miter length = halfW / sin(half-angle) ≈ halfW / (|cross|/2)
-        // but we protect against zero-cross.
-        var miterLen = (MathF.Abs(cross) > 1e-6f) ? halfW / (MathF.Abs(cross) * 0.5f) : float.MaxValue;
-        _ = sinHalf; // kept for documentation; miterLen supersedes it
-
-        if (cross >= 0f)
-        {
-            // Left turn — outer side is left.
-            if (join == LineJoin.Miter && miterLen <= miterLimit * halfW)
-            {
-                // Miter point is bisector offset.
-                var mx = cx + bx * miterLen;
-                var my = cy + by * miterLen;
-                left.Add((mx, my));
-            }
-            else if (join == LineJoin.Round)
-            {
-                // Arc on the outer (left) side.
-                var a0 = MathF.Atan2(ly0, lx0);
-                var a1 = MathF.Atan2(ly1, lx1);
-                AddArcPoints(cx, cy, halfW, a0, a1, ccw: true, left);
-            }
-            else
-            {
-                // Bevel (or miter fallback): two points.
-                left.Add((cx + lx0 * halfW, cy + ly0 * halfW));
-                left.Add((cx + lx1 * halfW, cy + ly1 * halfW));
-            }
-            // Inner (right) side — simple single intersection.
-            right.Add((cx - bx * halfW, cy - by * halfW));
-        }
-        else
-        {
-            // Right turn — outer side is right.
-            if (join == LineJoin.Miter && miterLen <= miterLimit * halfW)
-            {
-                var mx = cx - bx * miterLen;
-                var my = cy - by * miterLen;
-                right.Add((mx, my));
-            }
-            else if (join == LineJoin.Round)
-            {
-                var a0 = MathF.Atan2(-ly0, -lx0);
-                var a1 = MathF.Atan2(-ly1, -lx1);
-                AddArcPoints(cx, cy, halfW, a0, a1, ccw: false, right);
-            }
-            else
-            {
-                right.Add((cx - lx0 * halfW, cy - ly0 * halfW));
-                right.Add((cx - lx1 * halfW, cy - ly1 * halfW));
-            }
-            left.Add((cx + bx * halfW, cy + by * halfW));
-        }
-    }
-
-    /// <summary>
-    /// Append arc sample points (excluding the exact start) from angle
-    /// <paramref name="a0"/> to <paramref name="a1"/> around
-    /// <c>(cx, cy)</c> with the given <paramref name="radius"/>.
-    /// </summary>
-    private static void AddArcPoints(
-        float cx, float cy, float radius,
-        float a0, float a1,
-        bool ccw,
-        List<(float X, float Y)> pts)
-    {
-        // Normalise the angular span to [0, 2π) in the requested direction.
-        const float TwoPi = MathF.PI * 2f;
-        var span = ccw ? a1 - a0 : a0 - a1;
-        while (span < 0f) span += TwoPi;
-        while (span > TwoPi) span -= TwoPi;
-
-        var steps = Math.Max(1, (int)MathF.Ceiling(span / TwoPi * ArcSegments));
-        var dAngle = (ccw ? span : -span) / steps;
-
-        for (var k = 1; k <= steps; k++)
-        {
-            var a = a0 + dAngle * k;
-            pts.Add((cx + MathF.Cos(a) * radius, cy + MathF.Sin(a) * radius));
-        }
-    }
-
-    /// <summary>
-    /// Compute the unit left-hand (CCW) perpendicular of vector <c>(dx, dy)</c>.
-    /// Returns <c>(0, 0)</c> for zero-length input.
-    /// </summary>
-    private static void NormPerp(float dx, float dy, out float px, out float py)
-    {
-        var len = MathF.Sqrt(dx * dx + dy * dy);
-        if (len < 1e-9f) { px = 0f; py = 0f; return; }
-        // Left perpendicular of (dx, dy) is (-dy, dx) normalised.
-        px = -dy / len;
-        py =  dx / len;
-    }
-
-    /// <summary>Emit a closed polygon from a point list.</summary>
-    private static void EmitClosed(List<(float X, float Y)> pts, IGlyphSink sink)
-    {
-        if (pts.Count == 0) return;
-        sink.MoveTo(pts[0].X, pts[0].Y);
-        for (var i = 1; i < pts.Count; i++)
-            sink.LineTo(pts[i].X, pts[i].Y);
         sink.Close();
     }
 
     // ── Path collector ────────────────────────────────────────────────────────
 
-    private sealed class Contour
+    internal sealed class Contour
     {
         public List<(float X, float Y)> Points { get; } = [];
         public bool Closed { get; set; }
@@ -486,7 +281,7 @@ internal static class OutlineStroker
     /// Receives raw IGlyphSink calls, flattens quadratic and cubic Béziers into
     /// line segments, and groups them by contour.
     /// </summary>
-    private sealed class SegmentCollector : IGlyphSink
+    internal sealed class SegmentCollector : IGlyphSink
     {
         private readonly List<Contour> _contours = [];
         private Contour? _current;

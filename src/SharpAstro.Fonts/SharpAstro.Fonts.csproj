@@ -45,6 +45,21 @@
     <PackageReference Include="SharpAstro.Png" />
   </ItemGroup>
 
+  <!--
+    The vector scene (paths, paints, groups) that SceneRasterizer draws. It is the format-neutral model
+    SharpAstro.Svg reads SVG into; this library takes the model only, not the SVG reader. Same sibling-or-package
+    switch as SharpAstro.Png above, and the same repo.
+  -->
+  <PropertyGroup>
+    <UseLocalSharpAstroVector Condition="'$(UseLocalSharpAstroVector)' == '' AND Exists('..\..\..\Codecs\src\SharpAstro.Vector\SharpAstro.Vector.csproj')">true</UseLocalSharpAstroVector>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroVector)' == 'true'">
+    <ProjectReference Include="..\..\..\Codecs\src\SharpAstro.Vector\SharpAstro.Vector.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroVector)' != 'true'">
+    <PackageReference Include="SharpAstro.Vector" />
+  </ItemGroup>
+
   <ItemGroup>
     <None Include="..\..\LICENSE" Pack="true" PackagePath="" />
     <None Include="..\..\README.md" Pack="true" PackagePath="" />

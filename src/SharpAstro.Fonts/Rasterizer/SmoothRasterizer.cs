@@ -89,65 +89,7 @@ public static class SmoothRasterizer
         {
             Array.Clear(coverage);
 
-            for (var s = 0; s < subSamples; s++)
-            {
-                var sy = py + (s + 0.5f) * invSub;
-
-                // Build active-edge crossings.
-                var k = 0;
-                for (var i = 0; i < n; i++)
-                {
-                    var y0 = ys[i];
-                    var y1 = ys1[i];
-                    int wind;
-                    float ya, yb, xa, xb;
-                    if (y0 < y1) { ya = y0; yb = y1; xa = xs[i]; xb = xs1[i]; wind = +1; }
-                    else if (y0 > y1) { ya = y1; yb = y0; xa = xs1[i]; xb = xs[i]; wind = -1; }
-                    else continue; // horizontal edge contributes no crossing
-
-                    if (sy < ya || sy >= yb) continue;
-                    var t = (sy - ya) / (yb - ya);
-                    var x = xa + t * (xb - xa);
-                    crossings[k++] = (x, wind);
-                }
-                if (k == 0) continue;
-
-                // Sort active crossings by X (insertion sort — k is typically tiny).
-                for (var i = 1; i < k; i++)
-                {
-                    var key = crossings[i];
-                    var j = i - 1;
-                    while (j >= 0 && crossings[j].X > key.X)
-                    {
-                        crossings[j + 1] = crossings[j];
-                        j--;
-                    }
-                    crossings[j + 1] = key;
-                }
-
-                // Non-zero winding scan.
-                var winding = 0;
-                float spanStart = 0;
-                var inSpan = false;
-                for (var i = 0; i < k; i++)
-                {
-                    var prevWind = winding;
-                    winding += crossings[i].Wind;
-                    var x = crossings[i].X;
-
-                    if (prevWind == 0 && winding != 0)
-                    {
-                        spanStart = x;
-                        inSpan = true;
-                    }
-                    else if (prevWind != 0 && winding == 0 && inSpan)
-                    {
-                        AccumulateSpan(coverage, spanStart, x, invSub, width);
-                        inSpan = false;
-                    }
-                }
-                // Defensive: ignore unmatched span (shouldn't happen for sane outlines).
-            }
+            AccumulateRow(xs, ys, xs1, ys1, n, py, subSamples, invSub, evenOdd: false, coverage, crossings, width);
 
             var rowOffset = py * width;
             for (var px = 0; px < width; px++)
@@ -157,6 +99,122 @@ public static class SmoothRasterizer
                 alpha[rowOffset + px] = (byte)(c * 255f + 0.5f);
             }
         }
+    }
+
+    /// <summary>
+    /// One pixel row: the coverage of every sub-scanline in it, added into <paramref name="coverage"/>.
+    /// The body of the loop in <see cref="Render"/>, taken out so that <see cref="CoverageInto"/> can share it;
+    /// with <paramref name="evenOdd"/> false it is the same arithmetic in the same order as before.
+    /// </summary>
+    private static void AccumulateRow(ReadOnlySpan<float> xs, ReadOnlySpan<float> ys, ReadOnlySpan<float> xs1, ReadOnlySpan<float> ys1,
+        int n, int py, int subSamples, float invSub, bool evenOdd, float[] coverage, (float X, int Wind)[] crossings, int width)
+    {
+        for (var s = 0; s < subSamples; s++)
+        {
+            var sy = py + (s + 0.5f) * invSub;
+
+            // Build active-edge crossings.
+            var k = 0;
+            for (var i = 0; i < n; i++)
+            {
+                var y0 = ys[i];
+                var y1 = ys1[i];
+                int wind;
+                float ya, yb, xa, xb;
+                if (y0 < y1) { ya = y0; yb = y1; xa = xs[i]; xb = xs1[i]; wind = +1; }
+                else if (y0 > y1) { ya = y1; yb = y0; xa = xs1[i]; xb = xs[i]; wind = -1; }
+                else continue; // horizontal edge contributes no crossing
+
+                if (sy < ya || sy >= yb) continue;
+                var t = (sy - ya) / (yb - ya);
+                var x = xa + t * (xb - xa);
+                crossings[k++] = (x, wind);
+            }
+            if (k == 0) continue;
+
+            // Sort active crossings by X (insertion sort — k is typically tiny).
+            for (var i = 1; i < k; i++)
+            {
+                var key = crossings[i];
+                var j = i - 1;
+                while (j >= 0 && crossings[j].X > key.X)
+                {
+                    crossings[j + 1] = crossings[j];
+                    j--;
+                }
+                crossings[j + 1] = key;
+            }
+
+            if (evenOdd)
+            {
+                // Inside between the 1st and 2nd crossing, the 3rd and 4th, and so on.
+                for (var i = 0; i + 1 < k; i += 2)
+                    AccumulateSpan(coverage, crossings[i].X, crossings[i + 1].X, invSub, width);
+                continue;
+            }
+
+            // Non-zero winding scan.
+            var winding = 0;
+            float spanStart = 0;
+            var inSpan = false;
+            for (var i = 0; i < k; i++)
+            {
+                var prevWind = winding;
+                winding += crossings[i].Wind;
+                var x = crossings[i].X;
+
+                if (prevWind == 0 && winding != 0)
+                {
+                    spanStart = x;
+                    inSpan = true;
+                }
+                else if (prevWind != 0 && winding == 0 && inSpan)
+                {
+                    AccumulateSpan(coverage, spanStart, x, invSub, width);
+                    inSpan = false;
+                }
+            }
+            // Defensive: ignore unmatched span (shouldn't happen for sane outlines).
+        }
+    }
+
+    /// <summary>How far a scene's curve may be from the straight pieces it is cut into, in pixels.</summary>
+    private const float SceneFlatness = 0.05f;
+
+    /// <summary>
+    /// Coverage of a path that is ALREADY in device pixels with y down, on a fixed canvas, under either fill rule.
+    /// The glyph entry points above place a glyph at its own bounding box, flip y and fill non-zero; a vector scene
+    /// needs none of that, but the same edges, the same sub-scanlines and the same span arithmetic.
+    /// </summary>
+    /// <param name="coverage">Row-major, <paramref name="width"/> x <paramref name="height"/>; each pixel in the returned box is SET to 0..1.</param>
+    /// <returns>False when the path covers nothing on the canvas. Otherwise the half-open box of pixels that were written.</returns>
+    internal static bool CoverageInto(Action<IGlyphSink> drawTo, int width, int height, bool evenOdd, float[] coverage,
+        out int x0, out int y0, out int x1, out int y1, int subSamples = DefaultSubSamples)
+    {
+        x0 = y0 = x1 = y1 = 0;
+        var collector = new EdgeCollector(scale: 1f, offsetX: 0f, offsetY: 0f, flipY: false, flatness: SceneFlatness);
+        drawTo(collector);
+        if (collector.EdgeCount == 0) return false;
+
+        x0 = Math.Max(0, (int)MathF.Floor(collector.MinX));
+        y0 = Math.Max(0, (int)MathF.Floor(collector.MinY));
+        x1 = Math.Min(width, (int)MathF.Ceiling(collector.MaxX));
+        y1 = Math.Min(height, (int)MathF.Ceiling(collector.MaxY));
+        if (x0 >= x1 || y0 >= y1) return false;
+
+        var row = new float[width];
+        var crossings = new (float X, int Wind)[collector.EdgeCount];
+        var invSub = 1f / subSamples;
+        var n = collector.EdgeCount;
+        for (var py = y0; py < y1; py++)
+        {
+            Array.Clear(row, x0, x1 - x0);
+            AccumulateRow(collector.X0, collector.Y0, collector.X1, collector.Y1, n, py, subSamples, invSub, evenOdd, row, crossings, width);
+            var offset = py * width;
+            for (var px = x0; px < x1; px++)
+                coverage[offset + px] = Math.Clamp(row[px], 0f, 1f);
+        }
+        return true;
     }
 
     /// <summary>
@@ -216,17 +274,26 @@ public static class SmoothRasterizer
         private float _curX, _curY, _startX, _startY;
         private bool _hasStart;
 
-        public EdgeCollector(float scale, float offsetX, float offsetY)
+        // -1 for a font outline (y up, so it is flipped onto the bitmap), +1 for a path that is already y down.
+        private readonly float _ySign;
+
+        // A curve is cut until its control points are within this of the chord, squared: 0.25 px for a glyph, which
+        // has always been the value, and finer for a scene, whose shapes are large and are compared with exact ones.
+        private readonly float _flatnessSq;
+
+        public EdgeCollector(float scale, float offsetX, float offsetY, bool flipY = true, float flatness = 0.25f)
         {
             _scale = scale;
             _offsetX = offsetX;
             _offsetY = offsetY;
+            _ySign = flipY ? -1f : 1f;
+            _flatnessSq = flatness * flatness;
         }
 
         public void MoveTo(float x, float y)
         {
             _curX = x * _scale + _offsetX;
-            _curY = _offsetY - y * _scale;
+            _curY = _offsetY + _ySign * (y * _scale);
             _startX = _curX;
             _startY = _curY;
             _hasStart = true;
@@ -235,7 +302,7 @@ public static class SmoothRasterizer
         public void LineTo(float x, float y)
         {
             var nx = x * _scale + _offsetX;
-            var ny = _offsetY - y * _scale;
+            var ny = _offsetY + _ySign * (y * _scale);
             AddEdge(_curX, _curY, nx, ny);
             _curX = nx;
             _curY = ny;
@@ -244,9 +311,9 @@ public static class SmoothRasterizer
         public void QuadTo(float cx, float cy, float x, float y)
         {
             var ncx = cx * _scale + _offsetX;
-            var ncy = _offsetY - cy * _scale;
+            var ncy = _offsetY + _ySign * (cy * _scale);
             var nx = x * _scale + _offsetX;
-            var ny = _offsetY - y * _scale;
+            var ny = _offsetY + _ySign * (y * _scale);
             Subdivide(_curX, _curY, ncx, ncy, nx, ny, depth: 0);
             _curX = nx;
             _curY = ny;
@@ -255,11 +322,11 @@ public static class SmoothRasterizer
         public void CubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
         {
             var nc1x = c1x * _scale + _offsetX;
-            var nc1y = _offsetY - c1y * _scale;
+            var nc1y = _offsetY + _ySign * (c1y * _scale);
             var nc2x = c2x * _scale + _offsetX;
-            var nc2y = _offsetY - c2y * _scale;
+            var nc2y = _offsetY + _ySign * (c2y * _scale);
             var nx = x * _scale + _offsetX;
-            var ny = _offsetY - y * _scale;
+            var ny = _offsetY + _ySign * (y * _scale);
             SubdivideCubic(_curX, _curY, nc1x, nc1y, nc2x, nc2y, nx, ny, depth: 0);
             _curX = nx;
             _curY = ny;
@@ -283,7 +350,7 @@ public static class SmoothRasterizer
             var cross = (cx - x0) * dy - (cy - y0) * dx;
             var lenSq = dx * dx + dy * dy;
             // Threshold ~ 0.25 pixel² perpendicular distance.
-            if (depth >= 16 || cross * cross <= 0.0625f * lenSq + 0.01f)
+            if (depth >= 16 || cross * cross <= _flatnessSq * lenSq + 0.16f * _flatnessSq)
             {
                 AddEdge(x0, y0, x1, y1);
                 return;
@@ -310,7 +377,7 @@ public static class SmoothRasterizer
             var cross2 = (c2x - x0) * dy - (c2y - y0) * dx;
             var lenSq = dx * dx + dy * dy;
             var maxCrossSq = MathF.Max(cross1 * cross1, cross2 * cross2);
-            if (depth >= 18 || maxCrossSq <= 0.0625f * lenSq + 0.01f)
+            if (depth >= 18 || maxCrossSq <= _flatnessSq * lenSq + 0.16f * _flatnessSq)
             {
                 AddEdge(x0, y0, x1, y1);
                 return;

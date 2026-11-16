@@ -6,6 +6,30 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.18
+
+`SceneRasterizer` draws a vector scene, which is how an SVG document reaches pixels. Two bugs it exposed are fixed.
+  * **New: `SharpAstro.Fonts.Scenes.SceneRasterizer`** draws a `SharpAstro.VectorGraphics.VectorScene` (what `SharpAstro.Svg`
+    reads SVG into, in the new dependency `SharpAstro.Vector`) to an RGBA `ColorBitmap`, or to coverage alone for a
+    single-colour mark: fills under either rule, strokes with caps, joins, miter limit and dashes, linear and two-circle
+    radial gradients, and groups faded as one layer. It is not a second rasteriser: coverage is `SmoothRasterizer`'s (through a
+    new device-space entry that takes either fill rule and flattens curves to 0.05 px), strokes are `OutlineStroker`'s, and
+    gradients are projected by the functions COLR uses. Held against a headless browser on ten documents, strokes included
+    (`SceneRasterizerBrowserTests`, skipped where there is no Chrome or Edge), and against areas worked out by hand.
+    This library takes the scene model only; the SVG reader is a test dependency.
+    Measured (`SceneRasterizerBenchmarks`, `--job short`, arm64): an outline icon's coverage in 29 us at 20 px and 157 us at
+    64 px (28 KB and 114 KB allocated), a colour drawing with two gradients in 1.4 ms at 256 px, 1,000 filled curves in 31 ms
+    at 512 px. A call allocates its canvas, so it is for once a size, not once a frame.
+  * **Fixed: `OutlineStroker` drew round caps and every join INTO the stroke.** A round cap bulged inward and was cut out of
+    the line's end, and the inside of every corner was cut short, in either orientation. It had only ever stroked SHX pen
+    fonts, thin enough to hide it, and had no test on its geometry. It now emits the stroke as a union of convex pieces (a
+    rectangle a segment, a piece a corner, a piece an open end), all wound the same way, which has no inside-of-corner case
+    to get wrong; arcs are cut to 0.05 units, where they were 24 pieces a turn. **SHX glyphs change slightly**: their round
+    caps and joins are now drawn. A subpath that goes nowhere now shows its cap (a dot, or a square).
+  * **Fixed: a COLR radial gradient whose circles do not share a centre was mirrored.** `ProjectRadialGradient` had the sign
+    of one term wrong, which is nothing when the centres coincide (every plain radial gradient) and puts the focal point on
+    the opposite side when they do not. Found by holding an SVG focal gradient against a browser.
+
 ## 1.17
 
 Three CFF fixes that together decide whether an embedded Type1C subset draws the right glyphs at all.
