@@ -17,6 +17,9 @@ this file disagrees with. Bump it there and add the entry here, in the same comm
     gradients are projected by the functions COLR uses. Held against a headless browser on ten documents, strokes included
     (`SceneRasterizerBrowserTests`, skipped where there is no Chrome or Edge), and against areas worked out by hand.
     This library takes the scene model only; the SVG reader is a test dependency.
+    Measured (`SceneRasterizerBenchmarks`, `--job short`, arm64): an outline icon's coverage in 29 us at 20 px and 157 us at
+    64 px (28 KB and 114 KB allocated), a colour drawing with two gradients in 1.4 ms at 256 px, 1,000 filled curves in 31 ms
+    at 512 px. A call allocates its canvas, so it is for once a size, not once a frame.
   * **Fixed: `OutlineStroker` drew round caps and every join INTO the stroke.** A round cap bulged inward and was cut out of
     the line's end, and the inside of every corner was cut short, in either orientation. It had only ever stroked SHX pen
     fonts, thin enough to hide it, and had no test on its geometry. It now emits the stroke as a union of convex pieces (a
