@@ -813,7 +813,7 @@ public static class ColrRenderer
 
     // ---- Gradient math -----------------------------------------------------
 
-    private static float ProjectLinearGradient(Vector2 p, Vector2 p0, Vector2 p1, Vector2 p2)
+    internal static float ProjectLinearGradient(Vector2 p, Vector2 p0, Vector2 p1, Vector2 p2)
     {
         // Per COLR spec: the gradient direction is perpendicular to line(p0, p2).
         // Rotate (p2 - p0) by 90° to get the gradient axis direction, then
@@ -834,7 +834,7 @@ public static class ColrRenderer
         return Vector2.Dot(p - p0, gradDir) / denom;
     }
 
-    private static float ProjectRadialGradient(Vector2 p, Vector2 c0, float r0, Vector2 c1, float r1)
+    internal static float ProjectRadialGradient(Vector2 p, Vector2 c0, float r0, Vector2 c1, float r1)
     {
         // Two-circle radial gradient. Solve the quadratic for t such that
         //   |p - lerp(c0,c1,t)| = lerp(r0,r1,t)
@@ -844,7 +844,11 @@ public static class ColrRenderer
         var f = p - c0;
 
         var a = Vector2.Dot(d, d) - dr * dr;
-        var b = 2f * (Vector2.Dot(f, d) - r0 * dr);
+        // |f - t d|^2 = (r0 + t dr)^2  expands to  (d.d - dr^2) t^2 - 2 (f.d + r0 dr) t + (f.f - r0^2) = 0.
+        // This line used to read 2 (f.d - r0 dr): right when the circles share a centre (d = 0), which is every plain
+        // radial gradient, and mirrored when they do not, so a focal point came out on the opposite side of the centre.
+        // Found by holding an SVG focal gradient against a browser (SceneRasterizerBrowserTests).
+        var b = -2f * (Vector2.Dot(f, d) + r0 * dr);
         var c = Vector2.Dot(f, f) - r0 * r0;
 
         if (MathF.Abs(a) < 1e-6f)
