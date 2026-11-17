@@ -16,6 +16,14 @@ dotnet test -c Release                              # whole solution (core + sha
 dotnet test tests/SharpAstro.Fonts.Tests -c Release # just the core suite (fast iteration)
 ```
 
+## Mutation checks run in CI, on demand
+
+`tests/mutation/lists/*.py` are deliberate bugs, one at a time, for the `Mutation check` workflow
+(`.github/workflows/mutation.yml`): started from the Actions tab or by the label `mutation` on a pull request, never
+part of CI/CD. The runner is `tests/mutation/mutate.py` in the Codecs repository, which the workflow clones beside this
+one (branch: the workflow's input, else `tests/mutation/siblings`, else its default). Every bug is a build and a test
+run: never run a whole list on a working machine. A bug that says NOT APPLIED needs its entry updated.
+
 ## Versioning
 
 `<VersionMajorMinor>` in the repo-root `Directory.Build.props` (not `src/`, unlike the other siblings)

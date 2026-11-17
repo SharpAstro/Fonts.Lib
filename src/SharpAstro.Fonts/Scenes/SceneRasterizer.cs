@@ -51,6 +51,22 @@ public delegate bool ImageFileDecoder(ReadOnlySpan<byte> data, [NotNullWhen(true
 /// the result.</para>
 /// <para>Stateless and safe to call from any thread.</para>
 /// </remarks>
+/// <summary>What a scene needs from outside to be drawn whole. Everything is optional: what is not given is not drawn.</summary>
+public sealed record SceneRenderOptions
+{
+    /// <summary>
+    /// Decodes the scene's pictures; null for <see cref="SceneRasterizer.DecodePng"/>, which reads an embedded PNG and
+    /// nothing else.
+    /// </summary>
+    public SceneImageDecoder? DecodeImage { get; init; }
+
+    /// <summary>
+    /// Shapes the scene's text (<see cref="VectorText"/>): the caller's fonts and shaping. <see cref="SceneText.ShaperFor(SceneFontResolver)"/>
+    /// makes a plain one from a font lookup. Null: text is not drawn, because no font is known here.
+    /// </summary>
+    public SceneTextShaper? ShapeText { get; init; }
+}
+
 public static class SceneRasterizer
 {
     /// <summary>The scene scaled to fill <paramref name="width"/> x <paramref name="height"/> pixels.</summary>
@@ -64,7 +80,7 @@ public static class SceneRasterizer
     /// <summary>The scene drawn through <paramref name="sceneToPixels"/> onto a canvas of the given size.</summary>
     /// <returns>RGBA, not premultiplied, transparent where nothing was drawn; <c>Left</c> and <c>Top</c> are 0.</returns>
     public static ColorBitmap Rasterize(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels) =>
-        Rasterize(scene, width, height, sceneToPixels, null);
+        Rasterize(scene, width, height, sceneToPixels, (SceneImageDecoder?)null);
 
     /// <summary>The scene drawn through <paramref name="sceneToPixels"/> onto a canvas of the given size, its pictures decoded by <paramref name="decodeImage"/>.</summary>
     /// <param name="decodeImage">
@@ -72,9 +88,15 @@ public static class SceneRasterizer
     /// decoder for more formats can fall back to it. A picture it returns null for is not drawn.
     /// </param>
     /// <returns>RGBA, not premultiplied, transparent where nothing was drawn; <c>Left</c> and <c>Top</c> are 0.</returns>
-    public static ColorBitmap Rasterize(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels, SceneImageDecoder? decodeImage)
+    public static ColorBitmap Rasterize(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels, SceneImageDecoder? decodeImage) =>
+        Rasterize(scene, width, height, sceneToPixels, new SceneRenderOptions { DecodeImage = decodeImage });
+
+    /// <summary>The scene drawn through <paramref name="sceneToPixels"/> onto a canvas of the given size, with what <paramref name="options"/> gives it: a decoder for its pictures, a shaper for its text.</summary>
+    /// <returns>RGBA, not premultiplied, transparent where nothing was drawn; <c>Left</c> and <c>Top</c> are 0.</returns>
+    public static ColorBitmap Rasterize(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels, SceneRenderOptions options)
     {
-        float[] layer = Draw(scene, width, height, sceneToPixels, decodeImage);
+        ArgumentNullException.ThrowIfNull(options);
+        float[] layer = Draw(scene, width, height, sceneToPixels, options);
         byte[] pixels = new byte[width * height * 4];
         for (int i = 0; i < layer.Length; i += 4)
         {
@@ -101,13 +123,19 @@ public static class SceneRasterizer
 
     /// <inheritdoc cref="RasterizeCoverage(VectorScene, int, int)"/>
     public static byte[] RasterizeCoverage(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels) =>
-        RasterizeCoverage(scene, width, height, sceneToPixels, null);
+        RasterizeCoverage(scene, width, height, sceneToPixels, (SceneImageDecoder?)null);
 
     /// <inheritdoc cref="RasterizeCoverage(VectorScene, int, int)"/>
     /// <param name="decodeImage">As for <see cref="Rasterize(VectorScene, int, int, Matrix3x2, SceneImageDecoder?)"/>.</param>
-    public static byte[] RasterizeCoverage(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels, SceneImageDecoder? decodeImage)
+    public static byte[] RasterizeCoverage(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels, SceneImageDecoder? decodeImage) =>
+        RasterizeCoverage(scene, width, height, sceneToPixels, new SceneRenderOptions { DecodeImage = decodeImage });
+
+    /// <inheritdoc cref="RasterizeCoverage(VectorScene, int, int)"/>
+    /// <param name="options">As for <see cref="Rasterize(VectorScene, int, int, Matrix3x2, SceneRenderOptions)"/>.</param>
+    public static byte[] RasterizeCoverage(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels, SceneRenderOptions options)
     {
-        float[] layer = Draw(scene, width, height, sceneToPixels, decodeImage);
+        ArgumentNullException.ThrowIfNull(options);
+        float[] layer = Draw(scene, width, height, sceneToPixels, options);
         byte[] alpha = new byte[width * height];
         for (int i = 0; i < alpha.Length; i++) alpha[i] = ToByte(layer[i * 4 + 3] * 255f);
         return alpha;
@@ -159,7 +187,7 @@ public static class SceneRasterizer
     /// <summary>The largest side, in pixels, a pattern's tile is drawn at. A larger one is drawn at this and stretched.</summary>
     private const int MaxTileSide = 1024;
 
-    private static float[] Draw(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels, SceneImageDecoder? decodeImage)
+    private static float[] Draw(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels, SceneRenderOptions options)
     {
         ArgumentNullException.ThrowIfNull(scene);
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 1);
@@ -167,15 +195,18 @@ public static class SceneRasterizer
         // A float layer is 16 bytes a pixel, and a group needs another: keep one canvas well inside an array.
         ArgumentOutOfRangeException.ThrowIfGreaterThan((long)width * height, 1L << 26, "width * height");
 
-        var canvas = new Canvas(width, height, sceneToPixels, new Shared(decodeImage ?? DecodePng));
+        var canvas = new Canvas(width, height, sceneToPixels, new Shared(options.DecodeImage ?? DecodePng, options.ShapeText));
         float[] layer = new float[width * height * 4];
         canvas.Draw(scene.Nodes, layer);
         return layer;
     }
 
     /// <summary>What one call's canvases share: the decoder, and each picture and pattern tile once it has been made.</summary>
-    private sealed class Shared(SceneImageDecoder decode)
+    private sealed class Shared(SceneImageDecoder decode, SceneTextShaper? shapeText)
     {
+        /// <summary>The caller's text shaping, or null when it gave none.</summary>
+        public SceneTextShaper? ShapeText => shapeText;
+
         private readonly Dictionary<VectorImage, ColorBitmap?> _pictures = new(ReferenceEqualityComparer.Instance);
         public readonly Dictionary<(PatternPaint Pattern, int Width, int Height), Tile> Tiles = [];
 
@@ -267,6 +298,11 @@ public static class SceneRasterizer
                         break;
                     case VectorImage image:
                         Draw(image, layer);
+                        break;
+                    case VectorText text:
+                        // Text is drawn as the outlines of its glyphs, which takes the caller's fonts. With none
+                        // given it is left out, as a picture nobody decodes is.
+                        if (shared.ShapeText is { } shapeText) Draw(SceneText.ToShapes(text, shapeText), layer);
                         break;
                     default:
                         throw new NotSupportedException($"A scene node of type {node.GetType().Name} is not one this rasteriser knows.");

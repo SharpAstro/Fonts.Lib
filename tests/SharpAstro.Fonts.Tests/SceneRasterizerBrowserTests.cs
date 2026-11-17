@@ -327,15 +327,15 @@ public sealed class SceneRasterizerBrowserTests
     }
 
     /// <summary>Of 255. A pixel further off than this is not an anti-aliasing difference.</summary>
-    private const int MaxPixelDifference = 72;
+    internal const int MaxPixelDifference = 72;
 
     /// <summary>Of 255. How far outside its neighbourhood's range a pixel may be.</summary>
     private const int EdgeSlack = 24;
 
     /// <summary>Of 255, over all pixels and channels.</summary>
-    private const double MaxMeanDifference = 1.2;
+    internal const double MaxMeanDifference = 1.2;
 
-    private static bool OutsideNeighbourhood(byte[] ours, byte[] theirs, int width, int height, int i)
+    internal static bool OutsideNeighbourhood(byte[] ours, byte[] theirs, int width, int height, int i)
     {
         int x = i % width, y = i / width;
         for (int ch = 0; ch < 3; ch++)
@@ -395,13 +395,18 @@ public sealed class SceneRasterizerBrowserTests
     }
 
     /// <summary>Finds a Chromium-family browser and has it capture a page, headless. RGBA bytes, <c>width</c> wide.</summary>
-    private static class Browser
+    internal static class Browser
     {
         public const string Variable = "SVG_BROWSER";
 
         public static readonly string? Path = Resolve();
 
-        public static byte[] Capture(string html, int width, int height)
+        /// <param name="scale">
+        /// Device pixels a CSS pixel, each way. Above 1 the page is drawn that much larger and averaged back down, which
+        /// takes out what a browser does to small text to make it crisp (fitting it to the pixel grid, darkening it): at
+        /// four times the size those are a quarter of a pixel, and the average is close to plain coverage.
+        /// </param>
+        public static byte[] Capture(string html, int width, int height, int scale = 1)
         {
             string work = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sharpastro-fonts-svg-oracle-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(work);
@@ -420,8 +425,11 @@ public sealed class SceneRasterizerBrowserTests
                 [
                     "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "--no-first-run",
                     "--disable-extensions", "--disable-background-networking",
-                    "--force-device-scale-factor=1", "--force-color-profile=srgb",
+                    $"--force-device-scale-factor={scale}", "--force-color-profile=srgb",
+                    // Text in greys, not in the three colours of an LCD's stripes, and not fitted to the pixel grid.
+                    "--disable-lcd-text", "--font-render-hinting=none",
                     $"--user-data-dir={System.IO.Path.Combine(work, "profile")}",
+                    // In CSS pixels: the screenshot is this times the scale.
                     $"--window-size={width},{height}",
                     $"--screenshot={shot}",
                     new Uri(page).AbsoluteUri,
@@ -468,9 +476,35 @@ public sealed class SceneRasterizerBrowserTests
                 }
 
                 PngImageDecoder.TryDecodeRgba8(File.ReadAllBytes(shot), out byte[]? rgba, out int w, out int h).ShouldBeTrue();
-                w.ShouldBe(width);
-                h.ShouldBeGreaterThanOrEqualTo(height);
-                return rgba!;
+                w.ShouldBe(width * scale);
+                h.ShouldBeGreaterThanOrEqualTo(height * scale);
+                if (scale == 1) return rgba!;
+
+                // Each pixel the mean of its scale x scale block.
+                byte[] small = new byte[width * height * 4];
+                int area = scale * scale;
+                for (int y = 0; y < height; y++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        int r = 0, g = 0, b = 0, a = 0;
+                        for (int dy = 0; dy < scale; dy++)
+                        {
+                            int row = ((y * scale + dy) * w + x * scale) * 4;
+                            for (int dx = 0; dx < scale; dx++, row += 4)
+                            {
+                                r += rgba![row];
+                                g += rgba[row + 1];
+                                b += rgba[row + 2];
+                                a += rgba[row + 3];
+                            }
+                        }
+                        int at = (y * width + x) * 4;
+                        (small[at], small[at + 1]) = ((byte)((r + area / 2) / area), (byte)((g + area / 2) / area));
+                        (small[at + 2], small[at + 3]) = ((byte)((b + area / 2) / area), (byte)((a + area / 2) / area));
+                    }
+                }
+                return small;
             }
             finally
             {

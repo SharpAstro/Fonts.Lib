@@ -6,6 +6,79 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.21
+
+The text of a vector scene is laid out and drawn.
+  * **`SceneText`**: `ToShapes(VectorText, shaper)` lays out one text node of a scene (what `SharpAstro.Svg` 3.39 reads
+    `text`, `tspan` and `textPath` into) and gives it back as the outlines of its glyphs, one path a span, with the
+    span's paints. `WithTextAsShapes(scene, shaper)` does that for every text in a scene, in groups, masks and pattern
+    tiles too, so that what is left needs no font.
+  * **The placing is SVG's**: spans follow one another on a line; a character may have a place of its own, a shift
+    and a turn; the characters from one absolute place to the next are a chunk, anchored at its start, middle or end;
+    letter and word spacing; a length the text is to have, by wider gaps or by stretching; the baseline asked for
+    (alphabetic, middle, central, hanging, mathematical, ideographic, the two edges), shifts, superscripts and
+    subscripts; text along a path, turned to it, cut off where the path ends; underline, overline and line-through,
+    broken where a glyph crosses them; a gradient in the units of the text's box put on the box of the characters'
+    cells.
+  * **The fonts and the shaping are the caller's.** A `SceneTextShaper` turns a string and a `VectorFont` (family names,
+    size, weight, slant, stretch) into glyphs with advances, and nothing here chooses a face. `SceneText.ShaperFor` makes
+    a plain shaper from a font lookup (`SceneFontResolver`, asked by character so that it can fall back) or from one
+    face: one glyph a character and pair kerning, right for Latin, Greek and Cyrillic labels and not for scripts that
+    need joining or reordering. A caller with a real shaper passes that.
+  * **`SceneRasterizer`** draws text when it is given a shaper: new `SceneRenderOptions` (`DecodeImage`, `ShapeText`)
+    and `Rasterize` / `RasterizeCoverage` overloads that take it. With no shaper text is left out, as a picture nobody
+    decodes is: 1.20 refused a scene with a node it did not know, and a text node is no longer one of those.
+  * **Source change:** `Rasterize(scene, w, h, matrix, null)` with a literal `null` is now ambiguous between the
+    decoder overload and the options overload. Leave the argument out, or say which (`(SceneImageDecoder?)null`).
+  * Glyph outlines are drawn, so a colour font's glyphs come out in the text's paint, not their own.
+  * Pins: `SharpAstro.Vector` and `SharpAstro.Svg` 3.39.
+  * Tests: nineteen documents are drawn here and by headless Chrome or Edge with DejaVu Sans as the page's own web font
+    (`SceneTextBrowserTests`): mean difference 0.3 to 1.9 of 255, no pixel outside its neighbourhood. The page is
+    captured at four times the size and averaged down, because a browser fits small text to the pixel grid and darkens
+    it. Ten things were settled by it (listed in the Codecs repository's `roadmap/svg.md`, "What rung 5 settled"),
+    among them where a browser puts the three lines and that it breaks them at descenders. Two things it does are not
+    copied: it measures curved paths along coarse chords, and it does not set text along a basic shape or on a path's
+    right side. `SceneTextTests` holds the layout in numbers worked out from the font's own tables, with no browser.
+  * The browser's capture is committed (`Baselines/svg-text-chromium-windows.png`), so those nineteen comparisons run
+    everywhere with nothing installed; on Windows with a browser a further test holds the committed picture to a live
+    capture. Windows only, because Chrome is not the same on every platform: on the Ubuntu runner four of the nineteen
+    documents come out a pixel apart (baselines other than alphabetic, thin lines under small text), from how the font's
+    ascent, descent and x-height are rounded there.
+  * Mutation-checked, in CI on demand (`.github/workflows/mutation.yml`, the label `mutation` on a pull request):
+    `tests/mutation/lists/scene-text.py` is 43 deliberate bugs in the layout, one at a time. 42 were caught at once; the
+    one that was not (a `y` moving a character that is set along a path) needed a scene the reader never makes, and has
+    a test now.
+
+## 1.20
+
+The glyphs of an OpenType 'SVG ' table are drawn.
+  * **`SvgTable`** (`OpenTypeFont.Svg`, `HasSvgGlyphs`): which glyphs have an SVG description and where each one's
+    document lies, plain or gzip. Several records may share a document. Every offset and length is checked against the
+    table, and a record whose document is not in it is dropped. Parsed on first use.
+  * **`SvgGlyphRenderer`**: `TryReadScene` gives the glyph as a `VectorScene` in font units (y down, the origin on the
+    baseline: the specification's coordinates), `TryRender` draws it with `SceneRasterizer` into a `ColorBitmap` placed
+    like every other glyph bitmap. Both take the text colour, which is what `currentColor` is in a glyph, and the index of
+    a 'CPAL' palette, whose entries a glyph reads as `var(--color0)` and on, each with its alpha. `TryRender` also takes
+    a decoder for pictures embedded in a glyph (PNG is read without one).
+  * **`OpenTypeFont.RenderColor`** tries COLR, then SVG, then bitmap strikes. Nothing changes for a font that has COLR:
+    it stays first. A glyph whose SVG document is unreadable, or holds no element for it, is not a colour glyph, and
+    the caller draws its outline as before.
+  * The document is read by `SharpAstro.Svg`, which this package now references (it referenced the scene model only).
+    The reader is asked for one element of a document, the em square as the viewport, the colour and the palette, all
+    through general options; nothing about fonts was added to it.
+  * A glyph that claims to be enormous is drawn no further than three ems from its origin, and a document over the
+    reader's limits is no glyph, not an exception.
+  * **Cost:** a document is read again for every glyph drawn from it, and one document may describe many glyphs. Keep
+    what you render, as a glyph atlas does. Measured with a stopwatch over 2,000 runs (arm64, not a benchmark): about
+    20 us to read a glyph of a few shapes, 100 to 140 us to read it and draw it at 64 pixels.
+  * Pins: `SharpAstro.Vector` and `SharpAstro.Svg` 3.38.
+  * Tests: a font is built in memory (DejaVu Sans with a table and a palette written in the tests, eighteen cases).
+    Fifteen are held against **Firefox** drawing that font (the capture is committed, and checked against a live Firefox
+    where there is one); all eighteen, in two text colours and two palettes, against headless **Chrome or Edge** drawing
+    the document the specification says a glyph's picture is, since they do not draw SVG glyphs themselves. Firefox 160
+    was measured to have no palette, a black `currentColor` and no strokes in a glyph, and to let a nested glyph inherit
+    from the groups around it; in each of these the specification is followed here.
+
 ## 1.19
 
 `SceneRasterizer` draws what `SharpAstro.Svg` 3.37 added to the scene: clips, masks, images and patterns.

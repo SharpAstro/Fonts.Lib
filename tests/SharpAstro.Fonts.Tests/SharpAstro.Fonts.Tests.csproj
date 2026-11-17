@@ -24,8 +24,8 @@
   </ItemGroup>
 
   <!--
-    Test-only: the SVG reader, so that SceneRasterizer can be fed real documents and held against a browser.
-    The library itself references the scene model (SharpAstro.Vector) and never the reader.
+    The SVG reader, so that SceneRasterizer can be fed real documents and held against a browser. Since 1.20 the
+    library references it too (for the glyphs of an 'SVG ' table); the tests still name it, because they use it directly.
   -->
   <PropertyGroup>
     <UseLocalSharpAstroSvg Condition="'$(UseLocalSharpAstroSvg)' == '' AND Exists('..\..\..\Codecs\src\SharpAstro.Svg\SharpAstro.Svg.csproj')">true</UseLocalSharpAstroSvg>
