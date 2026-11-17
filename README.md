@@ -122,6 +122,7 @@ with thread-safe per-call clone.
 | `CPAL` | v0 and v1 headers, multiple palettes, BGRA→RGBA conversion |
 | `CBLC` | Index formats 1, 2, 3. Formats 4/5 (sparse) parse but return empty |
 | `CBDT` | Image formats 17, 18 (metrics + PNG), 19 (PNG-only with shared metrics) |
+| `SVG ` | The document list (ranges, shared documents, plain or gzip). A glyph's document is read by `SharpAstro.Svg` and drawn by `SceneRasterizer`: everything that reader reads, with the text colour as `currentColor` and a `CPAL` palette as `var(--color0)` and on. Not drawn: what the reader reports as unsupported (`text` in a glyph, filters) |
 
 Not implemented: `sbix` (Apple bitmap strikes), non-PNG CBDT image formats.
 
@@ -163,6 +164,7 @@ Not implemented: Apple kern v1, kern format 2, GPOS lookup types 1/3–9.
 | Mono fallback | Binary threshold |
 | SDF (signed distance field) | For GPU text rendering |
 | COLR v0/v1 renderer | Full paint-tree walker into RGBA surface |
+| SVG glyph renderer | `SvgGlyphRenderer`: the glyph as a vector scene, or drawn into an RGBA bitmap |
 
 ### PostScript Type 1
 

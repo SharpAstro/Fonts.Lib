@@ -327,15 +327,15 @@ public sealed class SceneRasterizerBrowserTests
     }
 
     /// <summary>Of 255. A pixel further off than this is not an anti-aliasing difference.</summary>
-    private const int MaxPixelDifference = 72;
+    internal const int MaxPixelDifference = 72;
 
     /// <summary>Of 255. How far outside its neighbourhood's range a pixel may be.</summary>
     private const int EdgeSlack = 24;
 
     /// <summary>Of 255, over all pixels and channels.</summary>
-    private const double MaxMeanDifference = 1.2;
+    internal const double MaxMeanDifference = 1.2;
 
-    private static bool OutsideNeighbourhood(byte[] ours, byte[] theirs, int width, int height, int i)
+    internal static bool OutsideNeighbourhood(byte[] ours, byte[] theirs, int width, int height, int i)
     {
         int x = i % width, y = i / width;
         for (int ch = 0; ch < 3; ch++)
@@ -395,7 +395,7 @@ public sealed class SceneRasterizerBrowserTests
     }
 
     /// <summary>Finds a Chromium-family browser and has it capture a page, headless. RGBA bytes, <c>width</c> wide.</summary>
-    private static class Browser
+    internal static class Browser
     {
         public const string Variable = "SVG_BROWSER";
 

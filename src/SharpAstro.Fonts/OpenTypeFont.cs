@@ -218,10 +218,32 @@ public sealed class OpenTypeFont
         // documented thread-safe and an unbarriered publish could hand another thread the null.
         _name = new Lazy<Tables.Name.NameTable?>(ParseName);
         _os2 = new Lazy<Tables.Os2.Os2Table?>(ParseOs2);
+        // 'SVG ' likewise: only a colour render of a font that has the table ever reads it.
+        _svg = new Lazy<Tables.Svg.SvgTable?>(ParseSvg);
     }
 
     private readonly Lazy<Tables.Name.NameTable?> _name;
     private readonly Lazy<Tables.Os2.Os2Table?> _os2;
+    private readonly Lazy<Tables.Svg.SvgTable?> _svg;
+
+    private Tables.Svg.SvgTable? ParseSvg()
+    {
+        if (!TryGetTable(Tags.Svg, out var table)) return null;
+        try { return Tables.Svg.SvgTable.Parse(table); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// The font's 'SVG ' table: which glyphs have an SVG description and where each document lies. Null when the font
+    /// has none, or nothing in it is usable. Parsed on first access.
+    /// </summary>
+    public Tables.Svg.SvgTable? Svg => _svg.Value;
+
+    /// <summary>
+    /// True if this font carries SVG glyph descriptions ('SVG '). Unlike COLR they need no 'CPAL': a palette only
+    /// supplies the colours a glyph asks for by <c>var(--colorN)</c>.
+    /// </summary>
+    public bool HasSvgGlyphs => Svg is not null;
 
     private Tables.Name.NameTable? ParseName()
     {
@@ -627,16 +649,27 @@ public sealed class OpenTypeFont
 
     /// <summary>
     /// Render a color glyph to an RGBA bitmap. Tries COLR v0/v1 first
-    /// (vector + paint tree), then falls back to CBDT (PNG bitmap strikes).
+    /// (vector + paint tree), then the glyph's SVG description ('SVG '),
+    /// then falls back to CBDT (PNG bitmap strikes).
     /// Returns null if this font / glyph has no color data — caller should
     /// fall back to <see cref="RenderGlyph"/>.
     /// </summary>
+    /// <remarks>
+    /// COLR stays first so that nothing changes for a font that has both (the build tools that write both make them
+    /// the same picture). An SVG glyph is drawn with black for <c>currentColor</c> and the first palette;
+    /// <see cref="SvgGlyphRenderer.TryRender"/> takes the text colour and a palette index.
+    /// </remarks>
     public ColorBitmap? RenderColor(uint glyphId, float pixelsPerEm)
     {
         if (HasColorGlyphs)
         {
             var colr = ColrRenderer.TryRender(this, glyphId, pixelsPerEm);
             if (colr is not null) return colr;
+        }
+        if (HasSvgGlyphs)
+        {
+            var svg = SvgGlyphRenderer.TryRender(this, glyphId, pixelsPerEm);
+            if (svg is not null) return svg;
         }
         if (HasColorBitmaps)
             return CbdtRenderer.TryRender(this, glyphId, pixelsPerEm);

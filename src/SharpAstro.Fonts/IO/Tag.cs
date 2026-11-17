@@ -49,6 +49,8 @@ internal static class Tags
     public static readonly Tag Cff2 = Tag.Parse("CFF2");
     public static readonly Tag Colr = Tag.Parse("COLR");
     public static readonly Tag Cpal = Tag.Parse("CPAL");
+    /// <summary>'SVG ' (with trailing space): SVG glyph descriptions.</summary>
+    public static readonly Tag Svg = Tag.Parse("SVG ");
     public static readonly Tag Cbdt2 = Tag.Parse("CBDT");
     public static readonly Tag Cblc2 = Tag.Parse("CBLC");
     public static readonly Tag Fvar2 = Tag.Parse("fvar");

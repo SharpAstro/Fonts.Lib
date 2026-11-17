@@ -6,6 +6,36 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.20
+
+The glyphs of an OpenType 'SVG ' table are drawn.
+  * **`SvgTable`** (`OpenTypeFont.Svg`, `HasSvgGlyphs`): which glyphs have an SVG description and where each one's
+    document lies, plain or gzip. Several records may share a document. Every offset and length is checked against the
+    table, and a record whose document is not in it is dropped. Parsed on first use.
+  * **`SvgGlyphRenderer`**: `TryReadScene` gives the glyph as a `VectorScene` in font units (y down, the origin on the
+    baseline: the specification's coordinates), `TryRender` draws it with `SceneRasterizer` into a `ColorBitmap` placed
+    like every other glyph bitmap. Both take the text colour, which is what `currentColor` is in a glyph, and the index of
+    a 'CPAL' palette, whose entries a glyph reads as `var(--color0)` and on, each with its alpha. `TryRender` also takes
+    a decoder for pictures embedded in a glyph (PNG is read without one).
+  * **`OpenTypeFont.RenderColor`** tries COLR, then SVG, then bitmap strikes. Nothing changes for a font that has COLR:
+    it stays first. A glyph whose SVG document is unreadable, or holds no element for it, is not a colour glyph, and
+    the caller draws its outline as before.
+  * The document is read by `SharpAstro.Svg`, which this package now references (it referenced the scene model only).
+    The reader is asked for one element of a document, the em square as the viewport, the colour and the palette, all
+    through general options; nothing about fonts was added to it.
+  * A glyph that claims to be enormous is drawn no further than three ems from its origin, and a document over the
+    reader's limits is no glyph, not an exception.
+  * **Cost:** a document is read again for every glyph drawn from it, and one document may describe many glyphs. Keep
+    what you render, as a glyph atlas does. Measured with a stopwatch over 2,000 runs (arm64, not a benchmark): about
+    20 us to read a glyph of a few shapes, 100 to 140 us to read it and draw it at 64 pixels.
+  * Pins: `SharpAstro.Vector` and `SharpAstro.Svg` 3.38.
+  * Tests: a font is built in memory (DejaVu Sans with a table and a palette written in the tests, eighteen cases).
+    Fifteen are held against **Firefox** drawing that font (the capture is committed, and checked against a live Firefox
+    where there is one); all eighteen, in two text colours and two palettes, against headless **Chrome or Edge** drawing
+    the document the specification says a glyph's picture is, since they do not draw SVG glyphs themselves. Firefox 160
+    was measured to have no palette, a black `currentColor` and no strokes in a glyph, and to let a nested glyph inherit
+    from the groups around it; in each of these the specification is followed here.
+
 ## 1.19
 
 `SceneRasterizer` draws what `SharpAstro.Svg` 3.37 added to the scene: clips, masks, images and patterns.
