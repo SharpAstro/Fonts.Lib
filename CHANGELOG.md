@@ -6,6 +6,25 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.19
+
+`SceneRasterizer` draws what `SharpAstro.Svg` 3.37 added to the scene: clips, masks, images and patterns.
+  * **Clips and masks.** A `VectorGroup` is cut to its `Clip` and multiplied by its `Mask` before it is blended. 1.18
+    drew such a group as if it had neither. A clip is coverage: each outline is rasterised like a fill and the
+    outlines of one clip are added up and cut off at 1, which is exact where they lie side by side or one inside
+    another.
+  * **Images.** A `VectorImage` is decoded once a call, fitted into its box (stretch, meet or slice, with its
+    alignment) and sampled between its four nearest pixels. An embedded PNG is decoded here; for anything else pass a
+    `SceneImageDecoder` to the new `Rasterize` / `RasterizeCoverage` overloads (it can fall back to
+    `SceneRasterizer.DecodePng`). A picture nobody decodes is not drawn. **Nothing is fetched.**
+  * **Patterns.** A `PatternPaint`'s tile is drawn once into pixels at the size it has on the canvas (at most 1,024 a
+    side) and repeated, on fills and strokes, with patterns inside patterns.
+  * 1.18 refused a scene with an image or a pattern (`NotSupportedException`). It still refuses a node or a paint it
+    does not know.
+  * Pins: `SharpAstro.Vector` and `SharpAstro.Svg` 3.37.
+  * Tests: the nine rung 3 documents of the reader's own browser oracle are drawn by this rasteriser and held against
+    headless Chrome or Edge; every one matched on its first run. Tests that need no browser pin the arithmetic.
+
 ## 1.18
 
 `SceneRasterizer` draws a vector scene, which is how an SVG document reaches pixels. Two bugs it exposed are fixed.
