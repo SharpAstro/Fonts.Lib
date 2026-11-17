@@ -46,9 +46,19 @@ jobs:
     - name: Mutate
       env:
         ONLY: ${{ inputs.only }}
+        # Where the browser tests write both pictures; kept only when a shard fails before any bug is tried.
+        SVG_ORACLE_DUMP: ${{ runner.temp }}/oracle-dump
       run: |
         status=0
         for list in Fonts.Lib/tests/mutation/lists/*.py; do
           python3 Codecs/tests/mutation/mutate.py "$list" --shard ${{ matrix.shard }}/6 ${ONLY:+--only "$ONLY"} || status=1
         done
         exit $status
+    - name: Keep the pictures of a failing shard
+      if: failure() && matrix.shard == 0
+      uses: actions/upload-artifact@v7
+      with:
+        name: oracle-dump
+        path: ${{ runner.temp }}/oracle-dump
+        if-no-files-found: ignore
+        retention-days: 5
