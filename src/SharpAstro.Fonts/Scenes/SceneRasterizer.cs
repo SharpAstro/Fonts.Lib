@@ -1,5 +1,7 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
+using SharpAstro.Codecs.Abstractions;
 using SharpAstro.Fonts.Color;
 using SharpAstro.Fonts.Outlines;
 using SharpAstro.Fonts.Rasterizer;
@@ -19,6 +21,12 @@ namespace SharpAstro.Fonts.Scenes;
 /// anything is fetched, is the caller's decision, made here.
 /// </summary>
 public delegate ColorBitmap? SceneImageDecoder(VectorImage image);
+
+/// <summary>
+/// Decodes an image file from its bytes, whatever its format. This is the shape of <c>ImageCodecs.TryDecode</c> in
+/// <c>SharpAstro.Codecs</c>, so that method can be passed as it is: see <see cref="SceneRasterizer.DecodeWith"/>.
+/// </summary>
+public delegate bool ImageFileDecoder(ReadOnlySpan<byte> data, [NotNullWhen(true)] out IDecodedImage? image);
 
 /// <summary>
 /// Draws a <see cref="VectorScene"/> (what <c>SharpAstro.Svg</c> reads an SVG document into) to pixels.
@@ -122,6 +130,30 @@ public static class SceneRasterizer
         return PngImageDecoder.TryDecodeRgba8(data, out byte[]? pixels, out int w, out int h) && pixels is not null
             ? new ColorBitmap(pixels, w, h, left: 0, top: 0)
             : null;
+    }
+
+    /// <summary>
+    /// A decoder for the pictures a scene carries as files, in every format <paramref name="decode"/> reads:
+    /// <c>SceneRasterizer.DecodeWith(ImageCodecs.TryDecode)</c> draws an embedded JPEG, WebP or anything else the
+    /// <c>SharpAstro.Codecs</c> facade knows. This package does not reference the facade, so a caller that has it
+    /// hands it over here.
+    /// </summary>
+    /// <remarks>
+    /// A picture the scene only names by an address is still not drawn (nothing is fetched). One
+    /// <paramref name="decode"/> declines goes to <see cref="DecodePng"/>, so giving a decoder never draws less than
+    /// giving none. An HDR picture is drawn as the facade's 8-bit view of it.
+    /// </remarks>
+    public static SceneImageDecoder DecodeWith(ImageFileDecoder decode)
+    {
+        ArgumentNullException.ThrowIfNull(decode);
+        return image =>
+        {
+            if (image.Data.IsEmpty) return null;
+            if (!decode(image.Data.Span, out IDecodedImage? decoded)) return DecodePng(image);
+            return decoded.Width > 0 && decoded.Height > 0
+                ? new ColorBitmap(decoded.ToRgba8(), decoded.Width, decoded.Height, left: 0, top: 0)
+                : null;
+        };
     }
 
     /// <summary>The largest side, in pixels, a pattern's tile is drawn at. A larger one is drawn at this and stretched.</summary>

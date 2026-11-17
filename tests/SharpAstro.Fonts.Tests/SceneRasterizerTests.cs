@@ -1,4 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
+using SharpAstro.Codecs.Abstractions;
 using SharpAstro.Fonts.Scenes;
 using SharpAstro.Svg;
 using SharpAstro.VectorGraphics;
@@ -124,6 +126,38 @@ public sealed class SceneRasterizerTests
 
         // What a decoder returns is not trusted to be whole.
         Area(SceneRasterizer.Rasterize(scene, 40, 40, Matrix3x2.Identity, _ => new ColorBitmap([1, 2, 3], 4, 4, 0, 0))).ShouldBe(25, 1e-6);
+    }
+
+    /// <summary>
+    /// A file decoder in the shape of the codecs facade's <c>ImageCodecs.TryDecode</c>, for a format made up here:
+    /// "RAW", a width, a height, then RGB bytes. It declines everything else.
+    /// </summary>
+    private static bool TryDecodeRaw(ReadOnlySpan<byte> data, [NotNullWhen(true)] out IDecodedImage? image)
+    {
+        image = null;
+        if (data.Length < 5 || !data[..3].SequenceEqual("RAW"u8)) return false;
+        image = new RasterImage(data[3], data[4], 3, SampleFormat.UInt8, data[5..].ToArray());
+        return true;
+    }
+
+    [Fact]
+    public void AFileDecoderInTheFacadesShape_DrawsEmbeddedPicturesOfItsFormats_AndNothingItDeclinesOrThatIsOnlyNamed()
+    {
+        // 2 x 1: a red pixel and a green one, in a format only the decoder given knows.
+        string raw = "data:image/x-raw;base64," + Convert.ToBase64String([(byte)'R', (byte)'A', (byte)'W', 2, 1, 255, 0, 0, 0, 255, 0]);
+        VectorScene scene = Scene($"<image width=\"20\" height=\"10\" preserveAspectRatio=\"none\" href=\"{raw}\"/>" +
+            "<image y=\"20\" width=\"10\" height=\"10\" href=\"data:image/x-other;base64,AAAA\"/>" +
+            "<image x=\"20\" y=\"20\" width=\"10\" height=\"10\" href=\"https://203.0.113.1/never.raw\"/>");
+
+        // Without it the format is not known and nothing is drawn.
+        Area(SceneRasterizer.Rasterize(scene, 40, 40)).ShouldBe(0, 1e-6);
+
+        // The method itself is passed, as ImageCodecs.TryDecode would be.
+        ColorBitmap bitmap = SceneRasterizer.Rasterize(scene, 40, 40, Matrix3x2.Identity, SceneRasterizer.DecodeWith(TryDecodeRaw));
+        At(bitmap, 2, 5).ShouldBe(((byte)255, (byte)0, (byte)0, (byte)255));
+        At(bitmap, 17, 5).ShouldBe(((byte)0, (byte)255, (byte)0, (byte)255));
+        // The picture it declines and the one that is only an address are left out.
+        Area(bitmap).ShouldBe(200, 1e-6);
     }
 
     [Fact]

@@ -17,6 +17,9 @@ this file disagrees with. Bump it there and add the entry here, in the same comm
     alignment) and sampled between its four nearest pixels. An embedded PNG is decoded here; for anything else pass a
     `SceneImageDecoder` to the new `Rasterize` / `RasterizeCoverage` overloads (it can fall back to
     `SceneRasterizer.DecodePng`). A picture nobody decodes is not drawn. **Nothing is fetched.**
+    `SceneRasterizer.DecodeWith(ImageFileDecoder)` makes that decoder from a file decoder in the shape of
+    `ImageCodecs.TryDecode`, so a caller with the `SharpAstro.Codecs` facade passes the method as it is and gets every
+    format the facade reads; what it declines still goes to `DecodePng`. This package does not reference the facade.
   * **Patterns.** A `PatternPaint`'s tile is drawn once into pixels at the size it has on the canvas (at most 1,024 a
     side) and repeated, on fills and strokes, with patterns inside patterns.
   * 1.18 refused a scene with an image or a pattern (`NotSupportedException`). It still refuses a node or a paint it
