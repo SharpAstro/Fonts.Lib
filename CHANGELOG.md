@@ -44,9 +44,10 @@ The text of a vector scene is laid out and drawn.
     capture. Windows only, because Chrome is not the same on every platform: on the Ubuntu runner four of the nineteen
     documents come out a pixel apart (baselines other than alphabetic, thin lines under small text), from how the font's
     ascent, descent and x-height are rounded there.
-  * Mutation checks run in CI on demand (`.github/workflows/mutation.yml`, the label `mutation` on a pull request):
-    `tests/mutation/lists/scene-text.py` is 43 deliberate bugs in the layout.
-    No mutation check was run on the layout (the run was stopped before it reached this package).
+  * Mutation-checked, in CI on demand (`.github/workflows/mutation.yml`, the label `mutation` on a pull request):
+    `tests/mutation/lists/scene-text.py` is 43 deliberate bugs in the layout, one at a time. 42 were caught at once; the
+    one that was not (a `y` moving a character that is set along a path) needed a scene the reader never makes, and has
+    a test now.
 
 ## 1.20
 
