@@ -325,6 +325,26 @@ public sealed class SceneTextTests
         Box(after[1]).Bottom.ShouldBe(50, 0.01f);
     }
 
+    [Fact]
+    public void OnAPath_AYOfACharacterMovesNothing()
+    {
+        // The reader leaves a y out for a character on a path; a scene from elsewhere may hold one. A browser ignores
+        // it, and so does this: the text is where it is without it.
+        VectorText text = Text("<text font-size=\"30\"><textPath path=\"M 0 50 H 300\">HH</textPath></text>");
+        text.Spans[0].Path.ShouldNotBeNull();
+        var withY = new VectorText
+        {
+            Spans = [text.Spans[0] with { Positions = [new VectorTextPosition(1, null, 120, 0, 0, 0)] }],
+            Transform = text.Transform,
+        };
+        VectorRect plain = Box((VectorShape)SceneText.ToShapes(text, Shaper).ShouldHaveSingleItem());
+        VectorRect moved = Box((VectorShape)SceneText.ToShapes(withY, Shaper).ShouldHaveSingleItem());
+        moved.Y.ShouldBe(plain.Y, 0.01f);
+        moved.Bottom.ShouldBe(plain.Bottom, 0.01f);
+        moved.X.ShouldBe(plain.X, 0.01f);
+        moved.Right.ShouldBe(plain.Right, 0.01f);
+    }
+
     // ---- The shaper ---------------------------------------------------------------------------------------------------
 
     [Fact]

@@ -76,7 +76,7 @@ M = [
   'gaps[i] = (gaps[i].From, gaps[i].To);'),
  ('a bar a span, not one bar', 'src/SharpAstro.Fonts/Scenes/SceneText.cs', 'fonts',
   '                && SameLine(spans[clusters[end].Span], metrics[clusters[end].Span]))',
-  '                && clusters[end].Span == first.Span)'),
+  '                && SameLine(spans[clusters[end].Span], metrics[clusters[end].Span]) && clusters[end].Span == clusters[start].Span)'),
  ('lines at the size of the span before', 'src/SharpAstro.Fonts/Scenes/SceneText.cs', 'fonts',
   'other.Font.Size == size && MathF.Abs(',
   'MathF.Abs('),
