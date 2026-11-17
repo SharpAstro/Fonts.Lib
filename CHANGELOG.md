@@ -6,6 +6,41 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 1.21
+
+The text of a vector scene is laid out and drawn.
+  * **`SceneText`**: `ToShapes(VectorText, shaper)` lays out one text node of a scene (what `SharpAstro.Svg` 3.39 reads
+    `text`, `tspan` and `textPath` into) and gives it back as the outlines of its glyphs, one path a span, with the
+    span's paints. `WithTextAsShapes(scene, shaper)` does that for every text in a scene, in groups, masks and pattern
+    tiles too, so that what is left needs no font.
+  * **The placing is SVG's**: spans follow one another on a line; a character may have a place of its own, a shift
+    and a turn; the characters from one absolute place to the next are a chunk, anchored at its start, middle or end;
+    letter and word spacing; a length the text is to have, by wider gaps or by stretching; the baseline asked for
+    (alphabetic, middle, central, hanging, mathematical, ideographic, the two edges), shifts, superscripts and
+    subscripts; text along a path, turned to it, cut off where the path ends; underline, overline and line-through,
+    broken where a glyph crosses them; a gradient in the units of the text's box put on the box of the characters'
+    cells.
+  * **The fonts and the shaping are the caller's.** A `SceneTextShaper` turns a string and a `VectorFont` (family names,
+    size, weight, slant, stretch) into glyphs with advances, and nothing here chooses a face. `SceneText.ShaperFor` makes
+    a plain shaper from a font lookup (`SceneFontResolver`, asked by character so that it can fall back) or from one
+    face: one glyph a character and pair kerning, right for Latin, Greek and Cyrillic labels and not for scripts that
+    need joining or reordering. A caller with a real shaper passes that.
+  * **`SceneRasterizer`** draws text when it is given a shaper: new `SceneRenderOptions` (`DecodeImage`, `ShapeText`)
+    and `Rasterize` / `RasterizeCoverage` overloads that take it. With no shaper text is left out, as a picture nobody
+    decodes is: 1.20 refused a scene with a node it did not know, and a text node is no longer one of those.
+  * **Source change:** `Rasterize(scene, w, h, matrix, null)` with a literal `null` is now ambiguous between the
+    decoder overload and the options overload. Leave the argument out, or say which (`(SceneImageDecoder?)null`).
+  * Glyph outlines are drawn, so a colour font's glyphs come out in the text's paint, not their own.
+  * Pins: `SharpAstro.Vector` and `SharpAstro.Svg` 3.39.
+  * Tests: nineteen documents are drawn here and by headless Chrome or Edge with DejaVu Sans as the page's own web font
+    (`SceneTextBrowserTests`): mean difference 0.3 to 1.9 of 255, no pixel outside its neighbourhood. The page is
+    captured at four times the size and averaged down, because a browser fits small text to the pixel grid and darkens
+    it. Ten things were settled by it (listed in the Codecs repository's `roadmap/svg.md`, "What rung 5 settled"),
+    among them where a browser puts the three lines and that it breaks them at descenders. Two things it does are not
+    copied: it measures curved paths along coarse chords, and it does not set text along a basic shape or on a path's
+    right side. `SceneTextTests` holds the layout in numbers worked out from the font's own tables, with no browser.
+    No mutation check was run on the layout (the run was stopped before it reached this package).
+
 ## 1.20
 
 The glyphs of an OpenType 'SVG ' table are drawn.

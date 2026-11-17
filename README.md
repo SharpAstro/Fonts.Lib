@@ -165,6 +165,7 @@ Not implemented: Apple kern v1, kern format 2, GPOS lookup types 1/3–9.
 | SDF (signed distance field) | For GPU text rendering |
 | COLR v0/v1 renderer | Full paint-tree walker into RGBA surface |
 | SVG glyph renderer | `SvgGlyphRenderer`: the glyph as a vector scene, or drawn into an RGBA bitmap |
+| Scene text | `SceneText`: the text of a vector scene (SVG `text`, `tspan`, `textPath`) laid out and turned into glyph outlines, with the fonts and shaping the caller gives |
 
 ### PostScript Type 1
 
