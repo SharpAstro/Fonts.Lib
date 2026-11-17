@@ -1,4 +1,6 @@
+using System.Runtime.CompilerServices;
 using System.Text;
+using SharpAstro.Png;
 using SharpAstro.Fonts.Scenes;
 using SharpAstro.Svg;
 using SharpAstro.VectorGraphics;
@@ -18,6 +20,15 @@ namespace SharpAstro.Fonts.Tests;
 /// pixels.</para>
 /// <para>This is where the reader's white-space rules, its lists of positions and its baselines are checked too: the
 /// Codecs repository has no font, so its own tests can only say what the scene holds.</para>
+/// <para><b>The browser's capture is committed</b> (<c>Baselines/svg-text-chromium-windows.png</c>), as Firefox's is for
+/// the glyphs of an OpenType SVG table, so the comparison runs everywhere with nothing installed and against the same
+/// picture. Where a browser is found on Windows a second test captures the page again and holds the committed picture to
+/// it; <c>BASELINE_REGEN=1</c> rewrites it. <b>Windows only, because Chrome does not draw text the same on every
+/// platform</b> (measured, Chrome on the Ubuntu runner against Edge and Chrome on Windows, the same page and font): of
+/// the nineteen documents fifteen agree as closely as they do on Windows, and four are a pixel apart in what hangs on
+/// the font's rounded ascent, descent and x-height: the baselines other than alphabetic (<c>baselines</c>,
+/// <c>edges</c>, the centred text of <c>path</c>) and thin lines under small text (<c>lines</c>). The rules here are the
+/// ones measured on Windows.</para>
 /// </remarks>
 public sealed class SceneTextBrowserTests
 {
@@ -174,20 +185,51 @@ public sealed class SceneTextBrowserTests
         }
     }
 
-    private static readonly Lazy<Dictionary<string, byte[]>> Rendered = new(RenderAll);
+    private const string BaselineName = "svg-text-chromium-windows.png";
+
+    /// <summary>The page every case is on, one under the other: its markup, its size, and where each case starts.</summary>
+    private static readonly Lazy<(string Html, int Width, int Height, int[] Tops)> Page = new(() =>
+    {
+        const int gap = 4;
+        var html = new StringBuilder("<!doctype html><html><head><meta charset=\"utf-8\"><style>");
+        html.Append($"@font-face {{ font-family: T; src: url(data:font/ttf;base64,{Convert.ToBase64String(File.ReadAllBytes(Fixtures.Path(Fixtures.DejaVuSans)))}); }}");
+        html.Append("html, body { margin: 0; background: #fff; } svg { position: absolute; left: 0; } ");
+        html.Append("text { font-family: T; font-variant-ligatures: none; text-rendering: geometricPrecision; }");
+        html.Append("</style></head><body>");
+        int y = 0, pageWidth = 1;
+        var tops = new List<int>();
+        foreach ((_, int width, int height, string body) in Cases)
+        {
+            html.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" style=\"top:{y}px\">{body}</svg>");
+            tops.Add(y);
+            y += height + gap;
+            pageWidth = Math.Max(pageWidth, width + gap);
+        }
+        html.Append("</body></html>");
+        return (html.ToString(), pageWidth, y, tops.ToArray());
+    });
+
+    /// <summary>The committed capture of the page: RGBA.</summary>
+    private static readonly Lazy<byte[]?> Committed = new(() =>
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "Baselines", BaselineName);
+        if (!File.Exists(path)) return null;
+        PngImageDecoder.TryDecodeRgba8(File.ReadAllBytes(path), out byte[]? rgba, out int width, out int height).ShouldBeTrue();
+        (width, height).ShouldBe((Page.Value.Width, Page.Value.Height), "the committed capture is of another set of cases: regenerate it");
+        return rgba;
+    });
 
     private static string Document(int width, int height, string body) =>
         $"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\">{body}</svg>";
+
+    private static string SourceDirectory([CallerFilePath] string file = "") => Path.GetDirectoryName(file)!;
 
     [Theory]
     [MemberData(nameof(Names))]
     public void Text_IsDrawnAsTheBrowserDrawsIt(string name)
     {
-        if (SceneRasterizerBrowserTests.Browser.Path is null)
-        {
-            Assert.Skip($"No Chromium-family browser found. Set {SceneRasterizerBrowserTests.Browser.Variable} to its executable, or install Chrome or Edge.");
-            return;
-        }
+        byte[]? committed = Committed.Value;
+        committed.ShouldNotBeNull($"Baselines/{BaselineName} is missing: run the tests with BASELINE_REGEN=1 on Windows with Chrome or Edge installed.");
         (_, int width, int height, string body) = Cases.Single(one => one.Name == name);
 
         SvgDocument document = SvgReader.Parse(Document(width, height, body));
@@ -200,7 +242,7 @@ public sealed class SceneTextBrowserTests
             int a = ours.Pixels[i * 4 + 3];
             for (int ch = 0; ch < 3; ch++) rgb[i * 3 + ch] = (byte)((ours.Pixels[i * 4 + ch] * a + 255 * (255 - a) + 127) / 255);
         }
-        byte[] theirs = Rendered.Value[name];
+        byte[] theirs = Tile(committed, name);
 
         if (Environment.GetEnvironmentVariable("SVG_ORACLE_DUMP") is { Length: > 0 } dump)
         {
@@ -209,6 +251,77 @@ public sealed class SceneTextBrowserTests
             PngWriter.WriteRgba(Path.Combine(dump, $"text-{name}-browser.png"), Opaque(theirs), width, height);
         }
 
+        Compare(name, rgb, theirs, width, height);
+
+        static byte[] Opaque(byte[] rgb)
+        {
+            byte[] rgba = new byte[rgb.Length / 3 * 4];
+            for (int i = 0; i < rgb.Length / 3; i++)
+            {
+                rgb.AsSpan(i * 3, 3).CopyTo(rgba.AsSpan(i * 4));
+                rgba[i * 4 + 3] = 255;
+            }
+            return rgba;
+        }
+    }
+
+    [Fact]
+    public void TheCommittedCapture_IsWhatTheBrowserDraws()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Skip("The committed capture is a browser's on Windows; Chrome on other platforms sets some text a pixel elsewhere (see the remarks). The other tests here use the committed capture.");
+            return;
+        }
+        if (SceneRasterizerBrowserTests.Browser.Path is null)
+        {
+            Assert.Skip($"No Chromium-family browser found. Set {SceneRasterizerBrowserTests.Browser.Variable} to its executable, or install Chrome or Edge. The other tests here use the committed capture.");
+            return;
+        }
+
+        (string html, int pageWidth, int pageHeight, _) = Page.Value;
+        if (Environment.GetEnvironmentVariable("SVG_ORACLE_DUMP") is { Length: > 0 } dump)
+        {
+            Directory.CreateDirectory(dump);
+            File.WriteAllText(Path.Combine(dump, "text-page.html"), html);
+        }
+        byte[] live = SceneRasterizerBrowserTests.Browser.Capture(html, pageWidth, pageHeight, scale: 4);
+        live.AsSpan().ContainsAnyExcept((byte)255).ShouldBeTrue("the browser drew nothing");
+        if (Environment.GetEnvironmentVariable("BASELINE_REGEN") == "1" || Committed.Value is null)
+        {
+            string path = Path.Combine(SourceDirectory(), "Baselines", BaselineName);
+            File.WriteAllBytes(path, SharpAstro.Png.PngWriter.Encode(live.AsSpan(0, pageWidth * pageHeight * 4).ToArray(), pageWidth, pageHeight));
+            Assert.Skip($"Wrote {path}. Look at it, then run again.");
+            return;
+        }
+
+        // The same page in the same font: only what a newer browser draws differently may differ.
+        byte[] committed = Committed.Value;
+        foreach ((string name, int width, int height, _) in Cases)
+        {
+            Compare($"{name}, committed against the live browser", Tile(committed, name), Tile(live, name), width, height);
+        }
+    }
+
+    /// <summary>One case cut out of a capture of the page, as RGB.</summary>
+    private static byte[] Tile(byte[] page, string name)
+    {
+        int n = Array.FindIndex(Cases, one => one.Name == name);
+        (_, int width, int height, _) = Cases[n];
+        (_, int pageWidth, _, int[] tops) = Page.Value;
+        byte[] rgb = new byte[width * height * 3];
+        for (int row = 0; row < height; row++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                page.AsSpan(((tops[n] + row) * pageWidth + x) * 4, 3).CopyTo(rgb.AsSpan((row * width + x) * 3));
+            }
+        }
+        return rgb;
+    }
+
+    private static void Compare(string name, byte[] rgb, byte[] theirs, int width, int height)
+    {
         double sum = 0;
         int wrong = 0;
         var where = new StringBuilder();
@@ -232,61 +345,8 @@ public sealed class SceneTextBrowserTests
         theirs.AsSpan().ContainsAnyExcept((byte)255).ShouldBeTrue($"{name}: the browser drew nothing");
         mean.ShouldBeLessThan(MaxMeanDifference, report);
         wrong.ShouldBe(0, report);
-
-        static byte[] Opaque(byte[] rgb)
-        {
-            byte[] rgba = new byte[rgb.Length / 3 * 4];
-            for (int i = 0; i < rgb.Length / 3; i++)
-            {
-                rgb.AsSpan(i * 3, 3).CopyTo(rgba.AsSpan(i * 4));
-                rgba[i * 4 + 3] = 255;
-            }
-            return rgba;
-        }
     }
 
     /// <summary>Of 255, over all pixels and channels. Text is all edges, so more of a picture is anti-aliasing than in a drawing of shapes.</summary>
     private const double MaxMeanDifference = 2.5;
-
-    private static Dictionary<string, byte[]> RenderAll()
-    {
-        const int gap = 4;
-        var html = new StringBuilder("<!doctype html><html><head><meta charset=\"utf-8\"><style>");
-        html.Append($"@font-face {{ font-family: T; src: url(data:font/ttf;base64,{Convert.ToBase64String(File.ReadAllBytes(Fixtures.Path(Fixtures.DejaVuSans)))}); }}");
-        html.Append("html, body { margin: 0; background: #fff; } svg { position: absolute; left: 0; } ");
-        html.Append("text { font-family: T; font-variant-ligatures: none; text-rendering: geometricPrecision; }");
-        html.Append("</style></head><body>");
-        int y = 0, pageWidth = 1;
-        var tops = new List<int>();
-        foreach ((_, int width, int height, string body) in Cases)
-        {
-            html.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" style=\"top:{y}px\">{body}</svg>");
-            tops.Add(y);
-            y += height + gap;
-            pageWidth = Math.Max(pageWidth, width + gap);
-        }
-        html.Append("</body></html>");
-        if (Environment.GetEnvironmentVariable("SVG_ORACLE_DUMP") is { Length: > 0 } dump)
-        {
-            Directory.CreateDirectory(dump);
-            File.WriteAllText(Path.Combine(dump, "text-page.html"), html.ToString());
-        }
-
-        byte[] page = SceneRasterizerBrowserTests.Browser.Capture(html.ToString(), pageWidth, y, scale: 4);
-        var rendered = new Dictionary<string, byte[]>();
-        for (int n = 0; n < Cases.Length; n++)
-        {
-            (string name, int width, int height, _) = Cases[n];
-            byte[] rgb = new byte[width * height * 3];
-            for (int row = 0; row < height; row++)
-            {
-                for (int x = 0; x < width; x++)
-                {
-                    page.AsSpan(((tops[n] + row) * pageWidth + x) * 4, 3).CopyTo(rgb.AsSpan((row * width + x) * 3));
-                }
-            }
-            rendered[name] = rgb;
-        }
-        return rendered;
-    }
 }

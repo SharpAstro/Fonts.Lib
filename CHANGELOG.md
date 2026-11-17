@@ -39,6 +39,13 @@ The text of a vector scene is laid out and drawn.
     among them where a browser puts the three lines and that it breaks them at descenders. Two things it does are not
     copied: it measures curved paths along coarse chords, and it does not set text along a basic shape or on a path's
     right side. `SceneTextTests` holds the layout in numbers worked out from the font's own tables, with no browser.
+  * The browser's capture is committed (`Baselines/svg-text-chromium-windows.png`), so those nineteen comparisons run
+    everywhere with nothing installed; on Windows with a browser a further test holds the committed picture to a live
+    capture. Windows only, because Chrome is not the same on every platform: on the Ubuntu runner four of the nineteen
+    documents come out a pixel apart (baselines other than alphabetic, thin lines under small text), from how the font's
+    ascent, descent and x-height are rounded there.
+  * Mutation checks run in CI on demand (`.github/workflows/mutation.yml`, the label `mutation` on a pull request):
+    `tests/mutation/lists/scene-text.py` is 43 deliberate bugs in the layout.
     No mutation check was run on the layout (the run was stopped before it reached this package).
 
 ## 1.20
