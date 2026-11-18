@@ -98,16 +98,15 @@ public sealed class Outline
 /// Hot-path API for rasterizers and other consumers. Implementations are not
 /// expected to be thread-safe (one sink per call).
 ///
-/// <para>TrueType outlines emit only <see cref="QuadTo"/> (quadratic);
-/// CFF/Type-2 charstrings emit only <see cref="CubicTo"/> (cubic). Sinks
+/// <para>TrueType outlines emit only <see cref="SharpAstro.VectorGraphics.IPathSink.QuadTo"/> (quadratic);
+/// CFF/Type-2 charstrings emit only <see cref="SharpAstro.VectorGraphics.IPathSink.CubicTo"/> (cubic). Sinks
 /// that consume both formats must implement both methods.</para>
+///
+/// <para>Since 2.0 this is <see cref="SharpAstro.VectorGraphics.IPathSink"/> under its old name: the five commands
+/// (<c>MoveTo</c>, <c>LineTo</c>, <c>QuadTo</c>, <c>CubicTo</c> and <c>Close</c>, called when the current contour
+/// closes back to its start) are that interface's, so a glyph sink can be handed to anything that writes a path
+/// and a class that implemented this one still does.</para>
 /// </summary>
-public interface IGlyphSink
+public interface IGlyphSink : SharpAstro.VectorGraphics.IPathSink
 {
-    void MoveTo(float x, float y);
-    void LineTo(float x, float y);
-    void QuadTo(float cx, float cy, float x, float y);
-    void CubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y);
-    /// <summary>Called when the current contour closes back to its start.</summary>
-    void Close();
 }

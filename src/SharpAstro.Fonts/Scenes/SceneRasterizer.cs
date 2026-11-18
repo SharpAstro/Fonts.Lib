@@ -9,7 +9,7 @@ using SharpAstro.Png;
 using SharpAstro.VectorGraphics;
 using FontLineCap = SharpAstro.Fonts.Rasterizer.LineCap;
 using FontLineJoin = SharpAstro.Fonts.Rasterizer.LineJoin;
-using SceneColor = SharpAstro.VectorGraphics.Rgba32;
+
 using SceneLineCap = SharpAstro.VectorGraphics.LineCap;
 using SceneLineJoin = SharpAstro.VectorGraphics.LineJoin;
 
@@ -187,6 +187,12 @@ public static class SceneRasterizer
     /// <summary>The largest side, in pixels, a pattern's tile is drawn at. A larger one is drawn at this and stretched.</summary>
     private const int MaxTileSide = 1024;
 
+    /// <summary>
+    /// The most pixels a filter is worked out on. A filter's layer is as large as its area, less what cannot reach the
+    /// canvas; one that would be larger than this is worked out coarser and stretched, which a blur that wide hides.
+    /// </summary>
+    private const long MaxFilterPixels = 1L << 24;
+
     private static float[] Draw(VectorScene scene, int width, int height, Matrix3x2 sceneToPixels, SceneRenderOptions options)
     {
         ArgumentNullException.ThrowIfNull(scene);
@@ -262,8 +268,18 @@ public static class SceneRasterizer
                     case VectorGroup group:
                     {
                         // Its own layer, so that the children overlap each other at full strength and fade as one.
-                        float[] inner = new float[layer.Length];
-                        Draw(group.Children, inner);
+                        float[] inner;
+                        if (group.Filter is { } filter)
+                        {
+                            // The layer is replaced by what the filter makes of it, before anything else is done to it.
+                            if (Filtered(group, filter) is not { } made) break;
+                            inner = made;
+                        }
+                        else
+                        {
+                            inner = new float[layer.Length];
+                            Draw(group.Children, inner);
+                        }
                         // How much of the layer is kept, pixel by pixel: the clip's coverage times the mask's factor.
                         float[]? kept = group.Clip is { } clip ? Region(clip) : null;
                         if (group.Mask is { } mask)
@@ -285,6 +301,15 @@ public static class SceneRasterizer
                             float factor = kept is null ? opacity : opacity * Math.Clamp(kept[i >> 2], 0f, 1f);
                             float a = inner[i + 3] * factor;
                             if (a <= 0) continue;
+                            if (group.Blend != VectorBlendMode.Normal)
+                            {
+                                // Mixed with what this layer already holds, which is what is below the group: the
+                                // scene so far, or so much of the group around it as is drawn.
+                                var below = new Vector4(layer[i], layer[i + 1], layer[i + 2], layer[i + 3]);
+                                var above = new Vector4(inner[i] * factor, inner[i + 1] * factor, inner[i + 2] * factor, a);
+                                Compositing.Blend(group.Blend, below, above).CopyTo(layer.AsSpan(i, 4));
+                                continue;
+                            }
                             float keep = 1f - a;
                             layer[i] = inner[i] * factor + layer[i] * keep;
                             layer[i + 1] = inner[i + 1] * factor + layer[i + 1] * keep;
@@ -308,6 +333,112 @@ public static class SceneRasterizer
                         throw new NotSupportedException($"A scene node of type {node.GetType().Name} is not one this rasteriser knows.");
                 }
             }
+        }
+
+        /// <summary>
+        /// A group's children drawn and put through its filter: a layer of this canvas's size, or null when nothing
+        /// of it can be on the canvas.
+        /// </summary>
+        /// <remarks>
+        /// The children are not drawn on this canvas but into a buffer of the filter's own: one whose rows and columns
+        /// run along the filter's axes, so that a blur or an offset is along them whatever the transform, and which
+        /// reaches past the canvas as far as the filter can bring something in from, so that what is off the canvas is
+        /// there to be blurred or moved onto it. Where the filter's axes are the canvas's and nothing has to be made
+        /// coarser, that buffer's pixels ARE the canvas's and the result is copied; otherwise it is resampled.
+        /// </remarks>
+        private float[]? Filtered(VectorGroup group, VectorFilter filter)
+        {
+            VectorRect area = filter.Region;
+            if (filter.Primitives.IsDefaultOrEmpty || !(area.Width > 0f) || !(area.Height > 0f)) return null;
+            if (!Matrix3x2.Invert(filter.Transform, out Matrix3x2 sceneToUnits)) return null;
+            Matrix3x2 m = filter.Transform * sceneToPixels;
+
+            float kx, ky, tx, ty;
+            int bufferWidth, bufferHeight, left = 0, top = 0;
+            bool onGrid = m.M12 == 0f && m.M21 == 0f && m.M11 > 0f && m.M22 > 0f;
+            if (onGrid)
+            {
+                (kx, ky) = (m.M11, m.M22);
+                int reach = SceneFilters.Reach(filter, kx, ky);
+                // The area in canvas pixels, whole ones, and of that what is on the canvas: only that is shown. Then as
+                // much more all round as the filter can bring in from, because what the layer has there counts, also
+                // outside the filter's area (a browser blurs a shape that is cut by the area as the whole shape).
+                long x0 = Math.Max((long)MathF.Floor(area.X * kx + m.M31), 0), x1 = Math.Min((long)MathF.Ceiling(area.Right * kx + m.M31), width);
+                long y0 = Math.Max((long)MathF.Floor(area.Y * ky + m.M32), 0), y1 = Math.Min((long)MathF.Ceiling(area.Bottom * ky + m.M32), height);
+                if (x1 <= x0 || y1 <= y0) return null;
+                (x0, y0, x1, y1) = (x0 - reach, y0 - reach, x1 + reach, y1 + reach);
+                (left, top, bufferWidth, bufferHeight) = ((int)x0, (int)y0, (int)(x1 - x0), (int)(y1 - y0));
+                (tx, ty) = (m.M31 - left, m.M32 - top);
+                if ((long)bufferWidth * bufferHeight > MaxFilterPixels)
+                {
+                    // Too large as it is: the same piece of the filter's area, coarser.
+                    float coarser = MathF.Sqrt(MaxFilterPixels / ((float)bufferWidth * bufferHeight));
+                    float ux = (left - m.M31) / kx, uy = (top - m.M32) / ky;
+                    (bufferWidth, bufferHeight) = (Math.Max(1, (int)(bufferWidth * coarser)), Math.Max(1, (int)(bufferHeight * coarser)));
+                    (kx, ky) = (kx * coarser, ky * coarser);
+                    (tx, ty) = (-ux * kx, -uy * ky);
+                    onGrid = false;
+                }
+            }
+            else
+            {
+                // Turned, skewed or mirrored: a buffer over the whole area and as much more all round as the filter can
+                // bring in from, a pixel of it as long as a unit is on the canvas.
+                kx = MathF.Sqrt(m.M11 * m.M11 + m.M12 * m.M12);
+                ky = MathF.Sqrt(m.M21 * m.M21 + m.M22 * m.M22);
+                if (!(kx > 0f) || !(ky > 0f) || !float.IsFinite(kx + ky)) return null;
+                int reach = SceneFilters.Reach(filter, kx, ky);
+                double w = Math.Ceiling((double)area.Width * kx) + 2.0 * reach, h = Math.Ceiling((double)area.Height * ky) + 2.0 * reach;
+                if (w * h > MaxFilterPixels)
+                {
+                    float coarser = (float)Math.Sqrt(MaxFilterPixels / (w * h));
+                    (kx, ky) = (kx * coarser, ky * coarser);
+                    reach = SceneFilters.Reach(filter, kx, ky);
+                    (w, h) = (Math.Floor(w * coarser), Math.Floor(h * coarser));
+                }
+                (bufferWidth, bufferHeight) = (Math.Max(1, (int)w), Math.Max(1, (int)h));
+                (tx, ty) = (reach - area.X * kx, reach - area.Y * ky);
+            }
+
+            var unitsToBuffer = new Matrix3x2(kx, 0, 0, ky, tx, ty);
+            float[] buffer = new float[bufferWidth * bufferHeight * 4];
+            new Canvas(bufferWidth, bufferHeight, sceneToUnits * unitsToBuffer, shared).Draw(group.Children, buffer);
+            float[] result = SceneFilters.Apply(filter, buffer, bufferWidth, bufferHeight, kx, ky, tx, ty);
+
+            float[] made = new float[width * height * 4];
+            if (onGrid)
+            {
+                // The buffer's pixels are the canvas's, moved by whole pixels: rows are copied as they are.
+                int from = Math.Max(0, left), to = Math.Min(width, left + bufferWidth);
+                for (int y = Math.Max(0, top); y < Math.Min(height, top + bufferHeight) && to > from; y++)
+                {
+                    result.AsSpan(((y - top) * bufferWidth + from - left) * 4, (to - from) * 4).CopyTo(made.AsSpan((y * width + from) * 4));
+                }
+                return made;
+            }
+
+            if (!Matrix3x2.Invert(unitsToBuffer, out Matrix3x2 bufferToUnits) || !Matrix3x2.Invert(bufferToUnits * m, out Matrix3x2 pixelsToBuffer)) return null;
+            // Only the canvas pixels the buffer's four corners enclose can have anything of it.
+            Matrix3x2 bufferToPixels = bufferToUnits * m;
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            foreach ((float cx, float cy) in (ReadOnlySpan<(float, float)>)[(0, 0), (bufferWidth, 0), (0, bufferHeight), (bufferWidth, bufferHeight)])
+            {
+                Vector2 corner = Vector2.Transform(new Vector2(cx, cy), bufferToPixels);
+                (minX, maxX) = (MathF.Min(minX, corner.X), MathF.Max(maxX, corner.X));
+                (minY, maxY) = (MathF.Min(minY, corner.Y), MathF.Max(maxY, corner.Y));
+            }
+            if (!float.IsFinite(minX + minY + maxX + maxY)) return null;
+            int px0 = (int)Math.Clamp(MathF.Floor(minX) - 1, 0, width), px1 = (int)Math.Clamp(MathF.Ceiling(maxX) + 1, 0, width);
+            int py0 = (int)Math.Clamp(MathF.Floor(minY) - 1, 0, height), py1 = (int)Math.Clamp(MathF.Ceiling(maxY) + 1, 0, height);
+            for (int y = py0; y < py1; y++)
+            {
+                for (int x = px0; x < px1; x++)
+                {
+                    Vector2 q = Vector2.Transform(new Vector2(x + 0.5f, y + 0.5f), pixelsToBuffer);
+                    SceneFilters.Sample(result, bufferWidth, bufferHeight, q.X, q.Y).CopyTo(made.AsSpan((y * width + x) * 4, 4));
+                }
+            }
+            return made;
         }
 
         private float[] Ones()
@@ -529,7 +660,7 @@ public static class SceneRasterizer
         }
     }
 
-    private static Vector4 ToVector(SceneColor c) => new(c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
+    private static Vector4 ToVector(Rgba32 c) => new(c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
 
     /// <summary>
     /// The colour at an offset: the extend rule, then a straight blend of the two stops around it, channels and alpha

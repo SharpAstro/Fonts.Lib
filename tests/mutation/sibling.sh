@@ -6,7 +6,9 @@ set -euo pipefail
 name="$1"; ref="${2:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 if [ -z "$ref" ] && [ -f "$here/siblings" ]; then
-  ref="$(sed -n "s/^${name}=//p" "$here/siblings" | head -n 1)"
+  # Without the carriage return a checkout on Windows may have put at the end of the line: with it no branch matches,
+  # and the default branch is cloned without a word of why.
+  ref="$(sed -n "s/^${name}=//p" "$here/siblings" | head -n 1 | tr -d '')"
 fi
 url="https://github.com/SharpAstro/${name}.git"
 if [ -n "$ref" ] && git ls-remote --exit-code --heads "$url" "$ref" > /dev/null; then

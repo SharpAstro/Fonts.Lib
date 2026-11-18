@@ -9,7 +9,7 @@ namespace SharpAstro.Fonts.Shx;
 /// which is why it lives beside them rather than inside a container class.
 ///
 /// <para>Unlike those two, the result is an <b>open pen path</b>, not closed contours:
-/// <see cref="IGlyphSink.Close"/> is never called. See <see cref="ShxFont.IsStroked"/>.</para>
+/// <see cref="SharpAstro.VectorGraphics.IPathSink.Close"/> is never called. See <see cref="ShxFont.IsStroked"/>.</para>
 ///
 /// <para>Per-call instance state (pen, scale, position stack) lives on the calling stack and
 /// never escapes, so this is safe to invoke concurrently from any thread.</para>
@@ -401,7 +401,7 @@ internal sealed class ShxShapeInterpreter
     /// <summary>
     /// Emit an arc as cubic Béziers, one per 45 degrees or less.
     ///
-    /// <para>Arcs become <see cref="IGlyphSink.CubicTo"/> rather than the polyline a quick
+    /// <para>Arcs become <see cref="SharpAstro.VectorGraphics.IPathSink.CubicTo"/> rather than the polyline a quick
     /// implementation would reach for. Geometry is computed in unscaled units with the pen
     /// at the local origin and every emitted point mapped out through the X and Y scales;
     /// Béziers are affine-invariant, so scaling the control points is exact even when those

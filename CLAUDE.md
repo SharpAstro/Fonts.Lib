@@ -16,6 +16,29 @@ dotnet test -c Release                              # whole solution (core + sha
 dotnet test tests/SharpAstro.Fonts.Tests -c Release # just the core suite (fast iteration)
 ```
 
+## One colour type, one path sink (2.0)
+
+`Rgba32` is `SharpAstro.VectorGraphics.Rgba32`, from the `SharpAstro.Vector` package; this repository had its own of
+the same shape until 2.0. `src/SharpAstro.Fonts/GlobalUsings.cs` and the test project's `GlobalUsings.cs` alias the
+name, because importing the whole namespace clashes with `SharpAstro.Fonts.Tables.Colr.GradientExtend`. Do not add a
+colour type here. `IGlyphSink` is `IPathSink` under its old name (an empty interface deriving from it): add commands to
+neither.
+
+## Blend modes and filters of a scene (2.0)
+
+- **`Compositing` is the one place a pixel is put on another**: the scene rasteriser's blended groups, a filter's
+  composite, merge and blend steps, and COLR's `PaintComposite` all call it. Colours in and out are premultiplied,
+  0 to 1. COLR's surfaces hold bytes that are NOT premultiplied; `ColrRenderer.CompositePixel` converts, and the bug it
+  replaced was exactly a mix of the two scales.
+- **A filter is worked out in a buffer of its own** (`SceneRasterizer.Canvas.Filtered`, `SceneFilters.Apply`): along
+  the filter's axes, wider than its area by `SceneFilters.Reach`. The layer is NOT cut to the filter's area before it
+  is filtered, only each step's result is (`KeepTo`): measured in a browser, and `NothingIsDrawnOutsideTheFiltersArea_...`
+  holds it. On the pixel grid the result is copied; turned, skewed, mirrored or made coarser, it is resampled.
+- **The blur is the browser's, not the textbook's**: three boxes from a box width of 2 (`BoxWidth`), the Gaussian only
+  below. `ABlurOfOne_IsThreeBoxes_AsABrowsersIs` pins the levels.
+- **`SceneRasterizerBrowserTests`' `filter-*` documents are the oracle for the READER's filter rules too** (Codecs has
+  no pictures to filter). Every edge in them is on a whole pixel on purpose.
+
 ## Mutation checks run in CI, on demand
 
 `tests/mutation/lists/*.py` are deliberate bugs, one at a time, for the `Mutation check` workflow

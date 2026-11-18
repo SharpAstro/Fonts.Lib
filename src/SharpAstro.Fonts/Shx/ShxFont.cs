@@ -348,7 +348,7 @@ public sealed class ShxFont
     /// <b>open path in font units</b>, baseline at y=0. Returns false if the face has no
     /// such code.
     ///
-    /// <para><see cref="IGlyphSink.Close"/> is never called: the result is a pen path, not
+    /// <para><see cref="SharpAstro.VectorGraphics.IPathSink.Close"/> is never called: the result is a pen path, not
     /// a closed contour, and a fill rasterizer given it directly produces recognisable but
     /// wrong glyphs — self-intersecting and with no weight. Use
     /// <see cref="TryGetStrokedOutline"/> or <see cref="RenderGlyph"/> for something
