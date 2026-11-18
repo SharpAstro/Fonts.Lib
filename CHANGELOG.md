@@ -59,8 +59,12 @@ Tests:
     `blend-modes` 0.14, `blend-layers` 0.25, `filter-blur` 0.28 (no pixel more than 8 levels off), `filter-shadow`
     0.15, `filter-colour` 0.25, `filter-edges` 0.05. **`filter-edges` is also the oracle for how `SharpAstro.Svg`
     resolves a filter.** Not yet run on Linux Chrome, where text came out a pixel apart; a blur may too.
-  * Mutation list `tests/mutation/lists/scene-effects.py`, 46 bugs, for the `Mutation check` workflow. Not run yet
-    when this was written.
+  * Mutation-checked, in CI: `tests/mutation/lists/scene-effects.py` was 46 deliberate bugs in the compositing, the
+    filters and the rasteriser, one at a time. 42 were caught at once. Three were not, each for want of a test, now
+    written: `SourceAlpha` keeping the layer's colour, a blend step with its two pictures changed over, and a turned
+    filter losing the layer outside its area. The fourth was not a bug (a filter with no steps let past the first test:
+    the steps answer the same) and is off the list, which leaves 45. The six browser documents pass on Chrome on Linux
+    as they are: no committed capture was needed, as it was for text.
 
 ## 1.21
 
