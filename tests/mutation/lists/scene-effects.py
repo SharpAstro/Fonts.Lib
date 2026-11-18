@@ -151,9 +151,8 @@ M = [
  ('a turned filter is put back a reach away from where it belongs', R, 'fonts',
   '(tx, ty) = (reach - area.X * kx, reach - area.Y * ky);',
   '(tx, ty) = (-area.X * kx, -area.Y * ky);'),
- ('a filter with no steps draws the layer', R, 'fonts',
-  'if (filter.Primitives.IsDefaultOrEmpty || !(area.Width > 0f) || !(area.Height > 0f)) return null;',
-  'if (!(area.Width > 0f) || !(area.Height > 0f)) return null;'),
+ # Not a bug: "a filter with no steps" taken out of the rasteriser's first test. SceneFilters.Apply answers the same
+ # for no steps (nothing), so the picture does not change. It was on this list until its first run showed that.
  ("a filter's result is put on the canvas a pixel to the right", R, 'fonts',
   'result.AsSpan(((y - top) * bufferWidth + from - left) * 4, (to - from) * 4).CopyTo(made.AsSpan((y * width + from) * 4));',
   'result.AsSpan(((y - top) * bufferWidth + from - left) * 4, (to - from - 1) * 4).CopyTo(made.AsSpan((y * width + from + 1) * 4));'),

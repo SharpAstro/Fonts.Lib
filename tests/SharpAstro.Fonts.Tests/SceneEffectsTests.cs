@@ -486,6 +486,37 @@ public sealed class SceneEffectsTests
         At(turned, 19, 20).A.ShouldBe((byte)255);
     }
 
+    // Three the mutation check found nothing looking at.
+    [Fact]
+    public void SourceAlpha_IsTheLayersAlpha_WithNoColour()
+    {
+        ColorBitmap bitmap = Draw($"<filter id=\"f\" {Wide}><feOffset in=\"SourceAlpha\"/></filter><rect x=\"10\" y=\"10\" width=\"10\" height=\"10\" fill=\"#c00\" filter=\"url(#f)\"/>");
+        At(bitmap, 15, 15).ShouldBe(((byte)0, (byte)0, (byte)0, (byte)255));
+        Ink(bitmap).ShouldBe(100, 1e-9);
+    }
+
+    [Fact]
+    public void ABlendStep_PutsItsFirstPictureOnItsSecond()
+    {
+        // "normal" is the one mode that shows which is on top without any arithmetic: the square on the flood.
+        ColorBitmap bitmap = Draw($"<filter id=\"f\" {Wide}><feFlood flood-color=\"#f00\" result=\"r\"/><feBlend in=\"SourceGraphic\" in2=\"r\" mode=\"normal\"/></filter>" +
+            "<rect x=\"10\" y=\"10\" width=\"10\" height=\"10\" fill=\"#00f\" filter=\"url(#f)\"/>");
+        ShouldBeNear(At(bitmap, 15, 15), 0, 0, 255, 255, what: "the square, on top");
+        ShouldBeNear(At(bitmap, 5, 5), 255, 0, 0, 255, what: "the flood, where the square is not");
+    }
+
+    [Fact]
+    public void ATurnedFilter_AlsoHasTheLayerFromOutsideItsArea()
+    {
+        // As NothingIsDrawnOutsideTheFiltersArea_ButTheLayerOutsideItStillCounts, turned: the area is the square 10..20,
+        // the layer a bar across everything, moved 5 along itself. What comes into the area on its left was outside it.
+        ColorBitmap bitmap = Draw("<filter id=\"f\" filterUnits=\"userSpaceOnUse\" x=\"10\" y=\"10\" width=\"10\" height=\"10\"><feOffset dx=\"5\"/></filter>" +
+            "<g transform=\"rotate(30 15 15)\"><rect x=\"-20\" y=\"12\" width=\"80\" height=\"6\" fill=\"#000\" filter=\"url(#f)\"/></g>");
+        Ink(bitmap).ShouldBe(10 * 6, 2.0);
+        // 1.2 units inside the area's left edge, in the middle of the bar.
+        At(bitmap, 11, 13).A.ShouldBe((byte)255);
+    }
+
     [Fact]
     public void AFilterWithNoSteps_OrNoArea_DrawsNothing_AndOneBuiltWrong_DoesNotThrow()
     {
