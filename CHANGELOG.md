@@ -6,6 +6,62 @@ The version NUMBER is not here: it lives in the repo-root `Directory.Build.props
 build job reads that property back rather than restating it, so a package can never declare a version
 this file disagrees with. Bump it there and add the entry here, in the same commit.
 
+## 2.0
+
+One colour type for the stack, and the blend modes and filters of a vector scene are drawn.
+
+**Breaking** (the reason for the major number):
+  * **`SharpAstro.Fonts.Color.Rgba32` is gone.** Every API that took or gave one (`CpalTable`, `ColrRenderer`,
+    `SvgGlyphRenderer`, the COLR paint data) now uses `SharpAstro.VectorGraphics.Rgba32` from the `SharpAstro.Vector`
+    package this one already depends on: the same four bytes, the same `Black`, `Transparent`, `Lerp` and
+    `WithMultipliedAlpha`. **To migrate**: where a file names `Rgba32` and imports `SharpAstro.Fonts.Color`, add
+    `using SharpAstro.VectorGraphics;`, or, where that clashes with `SharpAstro.Fonts.Tables.Colr.GradientExtend`,
+    `using Rgba32 = SharpAstro.VectorGraphics.Rgba32;`. Code that never names the type needs nothing (DIR.Lib needed
+    nothing). A compiled consumer must be rebuilt.
+  * Its constructor's alpha now has a default of 255 (`new Rgba32(r, g, b)` is opaque), which the old type did not have.
+
+Not breaking:
+  * **`IGlyphSink` now derives from `SharpAstro.VectorGraphics.IPathSink`** and declares nothing of its own: the five
+    commands are that interface's. A class that implemented `IGlyphSink` still does, with no change, and can now be
+    handed to anything that writes a path (`VectorPath.Replay`).
+
+Drawn:
+  * **Blend modes.** `SceneRasterizer` mixes a group with what is below it by its `VectorGroup.Blend`: normal and the
+    fifteen modes of the W3C Compositing and Blending specification, the four that are not channel by channel (hue,
+    saturation, color, luminosity) included. Needs `SharpAstro.Vector` / `SharpAstro.Svg` 3.40.
+  * **Filters.** A group's `VectorFilter` is worked out on its layer before the clip, the mask and the opacity: blur,
+    offset, flood, composite (arithmetic included), merge, colour matrix, blend and component transfer, each in linear
+    light or on the values as they are, each kept to its own area. `SceneFilters` is the engine.
+    - A blur is three box blurs from a deviation of 0.8 pixels on (below that, the Gaussian itself), which is what
+      Chrome and Edge draw; the Filter Effects specification allows the boxes from 2.
+    - The layer is drawn into a buffer along the filter's own axes, wider than the filter's area by as far as its
+      blurs and offsets reach, so that what is outside the area or off the picture is there to be blurred or moved in.
+      Where the axes are the picture's, the buffer's pixels are the picture's and nothing is resampled.
+    - A filter is worked out on at most 2^24 pixels; one that would need more (a blur of a hundred thousand pixels)
+      is worked out coarser and stretched.
+    - A step's area is rounded to whole pixels. Where an area lies between pixels a browser may differ by that pixel.
+  * **`Compositing`** (internal): Porter and Duff's operators and the blend modes in one place, for the scene
+    rasteriser, the filters and COLR.
+
+Fixed:
+  * **COLR `PaintComposite` drew wrong colours.** The code had colours on a scale of 0 to 255 against alphas of 0 to 1,
+    so every channel that was not zero came out as 255; and the four HSL modes were plain source-over. No test drew a
+    composite. It now uses `Compositing`; `ColrRenderer.CompositePixel` is the byte step, with a test. Two glyphs of
+    the Noto COLRv1 fixture now hold it on a real font: its paint graphs use `SrcIn` (296 glyphs) and `SoftLight` (262),
+    and the laptop and a flag were drawn, looked at and pinned (`ColrTests`).
+
+Tests:
+  * `SceneEffectsTests` (50 cases, no browser): every blend mode at chosen colours against values worked out apart from
+    the code, and filters on pictures whose pixels are known (an offset to the pixel, a blur that loses no ink and is
+    the same on both sides, a blur of 1 as boxes of 2, 2 and 3, linear light against plain values, what is off the
+    picture brought onto it, a turned filter, an absurd blur within a memory bound).
+  * `SceneRasterizerBrowserTests`: six more documents. Measured against Edge on Windows, mean difference of 255:
+    `blend-modes` 0.14, `blend-layers` 0.25, `filter-blur` 0.28 (no pixel more than 8 levels off), `filter-shadow`
+    0.15, `filter-colour` 0.25, `filter-edges` 0.05. **`filter-edges` is also the oracle for how `SharpAstro.Svg`
+    resolves a filter.** Not yet run on Linux Chrome, where text came out a pixel apart; a blur may too.
+  * Mutation list `tests/mutation/lists/scene-effects.py`, 46 bugs, for the `Mutation check` workflow. Not run yet
+    when this was written.
+
 ## 1.21
 
 The text of a vector scene is laid out and drawn.

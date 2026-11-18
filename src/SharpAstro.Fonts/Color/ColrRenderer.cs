@@ -405,6 +405,34 @@ public static class ColrRenderer
     }
 
     /// <summary>
+    /// One pixel of a PaintComposite: <paramref name="source"/> put on <paramref name="backdrop"/> by
+    /// <paramref name="mode"/>. All three are R, G, B, A bytes, not premultiplied, as the surfaces hold them.
+    /// </summary>
+    /// <remarks>
+    /// Porter and Duff's operators and the blend modes are <see cref="Compositing"/>'s, shared with the scene
+    /// rasteriser. (Until 2.0 this was written out here with the colours on a scale of 0 to 255 against alphas of 0 to
+    /// 1, so every channel that was not zero came out full; and the four HSL modes were plain source-over.)
+    /// </remarks>
+    internal static (byte R, byte G, byte B, byte A) CompositePixel(CompositeMode mode, ReadOnlySpan<byte> backdrop, ReadOnlySpan<byte> source)
+    {
+        // Both as premultiplied colour, every channel 0 to 1.
+        float sa = source[3] / 255f, da = backdrop[3] / 255f;
+        var above = new Vector4(source[0] / 255f * sa, source[1] / 255f * sa, source[2] / 255f * sa, sa);
+        var below = new Vector4(backdrop[0] / 255f * da, backdrop[1] / 255f * da, backdrop[2] / 255f * da, da);
+        Vector4 composited = Compositing.Composite(mode, below, above);
+
+        // Convert premultiplied float back to non-premultiplied byte.
+        var a8 = (byte)(int)Math.Clamp(MathF.Round(composited.W * 255f), 0f, 255f);
+        if (a8 == 0) return default;
+        float invA = 1f / composited.W;
+        return (
+            (byte)(int)Math.Clamp(MathF.Round(composited.X * invA * 255f), 0f, 255f),
+            (byte)(int)Math.Clamp(MathF.Round(composited.Y * invA * 255f), 0f, 255f),
+            (byte)(int)Math.Clamp(MathF.Round(composited.Z * invA * 255f), 0f, 255f),
+            a8);
+    }
+
+    /// <summary>
     /// Handle PaintComposite: render backdrop and source to separate off-screen
     /// surfaces, then composite them using the specified Porter-Duff mode into
     /// <paramref name="surface"/>. All standard Porter-Duff modes are supported.
@@ -432,200 +460,10 @@ public static class ColrRenderer
         {
             var pi = i * 4;
 
-            // Source (non-premultiplied)
-            var sr = srcPixels[pi];
-            var sg = srcPixels[pi + 1];
-            var sb = srcPixels[pi + 2];
-            var sa = srcPixels[pi + 3];
-
-            // Backdrop / destination (non-premultiplied)
-            var dr = backdropPixels[pi];
-            var dg = backdropPixels[pi + 1];
-            var db = backdropPixels[pi + 2];
-            var da = backdropPixels[pi + 3];
-
-            // Convert to premultiplied float for Porter-Duff arithmetic.
-            var Src_r = sr * sa / 255f;
-            var Src_g = sg * sa / 255f;
-            var Src_b = sb * sa / 255f;
-            var Src_a = sa / 255f;
-
-            var Dst_r = dr * da / 255f;
-            var Dst_g = dg * da / 255f;
-            var Dst_b = db * da / 255f;
-            var Dst_a = da / 255f;
-
-            float Out_r, Out_g, Out_b, Out_a;
-
-            switch (composite.Mode)
-            {
-                case CompositeMode.Clear:
-                    Out_r = Out_g = Out_b = Out_a = 0f;
-                    break;
-                case CompositeMode.Src:
-                    Out_r = Src_r; Out_g = Src_g; Out_b = Src_b; Out_a = Src_a;
-                    break;
-                case CompositeMode.Dest:
-                    Out_r = Dst_r; Out_g = Dst_g; Out_b = Dst_b; Out_a = Dst_a;
-                    break;
-                default:
-                case CompositeMode.SrcOver:
-                    // Src over Dst: Src + Dst*(1-srcA)
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = Src_r + Dst_r * (1f - Src_a);
-                    Out_g = Src_g + Dst_g * (1f - Src_a);
-                    Out_b = Src_b + Dst_b * (1f - Src_a);
-                    break;
-                case CompositeMode.DestOver:
-                    // Dst over Src: Dst + Src*(1-dstA)
-                    Out_a = Dst_a + Src_a * (1f - Dst_a);
-                    Out_r = Dst_r + Src_r * (1f - Dst_a);
-                    Out_g = Dst_g + Src_g * (1f - Dst_a);
-                    Out_b = Dst_b + Src_b * (1f - Dst_a);
-                    break;
-                case CompositeMode.SrcIn:
-                    // Result = Src * dstA
-                    Out_a = Src_a * Dst_a;
-                    Out_r = Src_r * Dst_a;
-                    Out_g = Src_g * Dst_a;
-                    Out_b = Src_b * Dst_a;
-                    break;
-                case CompositeMode.DestIn:
-                    // Result = Dst * srcA
-                    Out_a = Dst_a * Src_a;
-                    Out_r = Dst_r * Src_a;
-                    Out_g = Dst_g * Src_a;
-                    Out_b = Dst_b * Src_a;
-                    break;
-                case CompositeMode.SrcOut:
-                    // Result = Src * (1 - dstA)
-                    Out_a = Src_a * (1f - Dst_a);
-                    Out_r = Src_r * (1f - Dst_a);
-                    Out_g = Src_g * (1f - Dst_a);
-                    Out_b = Src_b * (1f - Dst_a);
-                    break;
-                case CompositeMode.DestOut:
-                    // Result = Dst * (1 - srcA)
-                    Out_a = Dst_a * (1f - Src_a);
-                    Out_r = Dst_r * (1f - Src_a);
-                    Out_g = Dst_g * (1f - Src_a);
-                    Out_b = Dst_b * (1f - Src_a);
-                    break;
-                case CompositeMode.SrcAtop:
-                    // Result = Src*dstA + Dst*(1-srcA)
-                    Out_a = Dst_a;
-                    Out_r = Src_r * Dst_a + Dst_r * (1f - Src_a);
-                    Out_g = Src_g * Dst_a + Dst_g * (1f - Src_a);
-                    Out_b = Src_b * Dst_a + Dst_b * (1f - Src_a);
-                    break;
-                case CompositeMode.DestAtop:
-                    // Result = Dst*srcA + Src*(1-dstA)
-                    Out_a = Src_a;
-                    Out_r = Dst_r * Src_a + Src_r * (1f - Dst_a);
-                    Out_g = Dst_g * Src_a + Src_g * (1f - Dst_a);
-                    Out_b = Dst_b * Src_a + Src_b * (1f - Dst_a);
-                    break;
-                case CompositeMode.Xor:
-                    // Result = Src*(1-dstA) + Dst*(1-srcA)
-                    Out_a = Src_a * (1f - Dst_a) + Dst_a * (1f - Src_a);
-                    Out_r = Src_r * (1f - Dst_a) + Dst_r * (1f - Src_a);
-                    Out_g = Src_g * (1f - Dst_a) + Dst_g * (1f - Src_a);
-                    Out_b = Src_b * (1f - Dst_a) + Dst_b * (1f - Src_a);
-                    break;
-                case CompositeMode.Plus:
-                    // Additive: Src + Dst, clamped.
-                    Out_a = Math.Min(1f, Src_a + Dst_a);
-                    Out_r = Math.Min(Out_a > 0 ? Out_a : 1f, Src_r + Dst_r);
-                    Out_g = Math.Min(Out_a > 0 ? Out_a : 1f, Src_g + Dst_g);
-                    Out_b = Math.Min(Out_a > 0 ? Out_a : 1f, Src_b + Dst_b);
-                    break;
-                case CompositeMode.Screen:
-                    // 1 - (1-Src)*(1-Dst) in premul: Src + Dst - Src*Dst
-                    Out_a = Src_a + Dst_a - Src_a * Dst_a;
-                    Out_r = Src_r + Dst_r - Src_r * Dst_r;
-                    Out_g = Src_g + Dst_g - Src_g * Dst_g;
-                    Out_b = Src_b + Dst_b - Src_b * Dst_b;
-                    break;
-                case CompositeMode.Overlay:
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = HardLightChannel(Dst_r, Dst_a, Src_r, Src_a);
-                    Out_g = HardLightChannel(Dst_g, Dst_a, Src_g, Src_a);
-                    Out_b = HardLightChannel(Dst_b, Dst_a, Src_b, Src_a);
-                    break;
-                case CompositeMode.Darken:
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = Math.Min(Src_r * Dst_a, Dst_r * Src_a) + Src_r * (1f - Dst_a) + Dst_r * (1f - Src_a);
-                    Out_g = Math.Min(Src_g * Dst_a, Dst_g * Src_a) + Src_g * (1f - Dst_a) + Dst_g * (1f - Src_a);
-                    Out_b = Math.Min(Src_b * Dst_a, Dst_b * Src_a) + Src_b * (1f - Dst_a) + Dst_b * (1f - Src_a);
-                    break;
-                case CompositeMode.Lighten:
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = Math.Max(Src_r * Dst_a, Dst_r * Src_a) + Src_r * (1f - Dst_a) + Dst_r * (1f - Src_a);
-                    Out_g = Math.Max(Src_g * Dst_a, Dst_g * Src_a) + Src_g * (1f - Dst_a) + Dst_g * (1f - Src_a);
-                    Out_b = Math.Max(Src_b * Dst_a, Dst_b * Src_a) + Src_b * (1f - Dst_a) + Dst_b * (1f - Src_a);
-                    break;
-                case CompositeMode.ColorDodge:
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = DodgeChannel(Src_r, Src_a, Dst_r, Dst_a);
-                    Out_g = DodgeChannel(Src_g, Src_a, Dst_g, Dst_a);
-                    Out_b = DodgeChannel(Src_b, Src_a, Dst_b, Dst_a);
-                    break;
-                case CompositeMode.ColorBurn:
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = BurnChannel(Src_r, Src_a, Dst_r, Dst_a);
-                    Out_g = BurnChannel(Src_g, Src_a, Dst_g, Dst_a);
-                    Out_b = BurnChannel(Src_b, Src_a, Dst_b, Dst_a);
-                    break;
-                case CompositeMode.HardLight:
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = HardLightChannel(Src_r, Src_a, Dst_r, Dst_a);
-                    Out_g = HardLightChannel(Src_g, Src_a, Dst_g, Dst_a);
-                    Out_b = HardLightChannel(Src_b, Src_a, Dst_b, Dst_a);
-                    break;
-                case CompositeMode.SoftLight:
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = SoftLightChannel(Src_r, Src_a, Dst_r, Dst_a);
-                    Out_g = SoftLightChannel(Src_g, Src_a, Dst_g, Dst_a);
-                    Out_b = SoftLightChannel(Src_b, Src_a, Dst_b, Dst_a);
-                    break;
-                case CompositeMode.Difference:
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = Src_r + Dst_r - 2f * Math.Min(Src_r * Dst_a, Dst_r * Src_a);
-                    Out_g = Src_g + Dst_g - 2f * Math.Min(Src_g * Dst_a, Dst_g * Src_a);
-                    Out_b = Src_b + Dst_b - 2f * Math.Min(Src_b * Dst_a, Dst_b * Src_a);
-                    break;
-                case CompositeMode.Exclusion:
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = Src_r + Dst_r - 2f * Src_r * Dst_r;
-                    Out_g = Src_g + Dst_g - 2f * Src_g * Dst_g;
-                    Out_b = Src_b + Dst_b - 2f * Src_b * Dst_b;
-                    break;
-                case CompositeMode.Multiply:
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = Src_r * Dst_r + Src_r * (1f - Dst_a) + Dst_r * (1f - Src_a);
-                    Out_g = Src_g * Dst_g + Src_g * (1f - Dst_a) + Dst_g * (1f - Src_a);
-                    Out_b = Src_b * Dst_b + Src_b * (1f - Dst_a) + Dst_b * (1f - Src_a);
-                    break;
-                case CompositeMode.HslHue:
-                case CompositeMode.HslSaturation:
-                case CompositeMode.HslColor:
-                case CompositeMode.HslLuminosity:
-                    // HSL non-separable blend modes — composite as SrcOver (best-effort).
-                    Out_a = Src_a + Dst_a * (1f - Src_a);
-                    Out_r = Src_r + Dst_r * (1f - Src_a);
-                    Out_g = Src_g + Dst_g * (1f - Src_a);
-                    Out_b = Src_b + Dst_b * (1f - Src_a);
-                    break;
-            }
-
-            // Convert premultiplied float back to non-premultiplied byte and
+            // The two pixels put together, as a non-premultiplied byte colour, and then
             // source-over blend the composite result onto the main surface.
-            var outA8 = (byte)(int)Math.Clamp(MathF.Round(Out_a * 255f), 0f, 255f);
+            (byte outR8, byte outG8, byte outB8, byte outA8) = CompositePixel(composite.Mode, backdropPixels.AsSpan(pi, 4), srcPixels.AsSpan(pi, 4));
             if (outA8 == 0) continue;
-            var invA = Out_a > 0f ? 1f / Out_a : 0f;
-            var outR8 = (byte)(int)Math.Clamp(MathF.Round(Out_r * invA * 255f), 0f, 255f);
-            var outG8 = (byte)(int)Math.Clamp(MathF.Round(Out_g * invA * 255f), 0f, 255f);
-            var outB8 = (byte)(int)Math.Clamp(MathF.Round(Out_b * invA * 255f), 0f, 255f);
 
             // Composite result over the destination surface using source-over.
             var dstPrev_a = dst[pi + 3];
@@ -642,61 +480,6 @@ public static class ColrRenderer
             dst[pi + 2] = (byte)((outB8 * outA8 + dst[pi + 2] * inv2 + 127) / 255);
             dst[pi + 3] = (byte)Math.Min(255, outA8 + (dst[pi + 3] * inv2 + 127) / 255);
         }
-    }
-
-    // ---- Porter-Duff channel helpers ----------------------------------------
-
-    /// <summary>Hard-light blend channel (premultiplied inputs).</summary>
-    private static float HardLightChannel(float Sc, float Sa, float Dc, float Da)
-    {
-        // Sc, Dc are premultiplied by their respective alphas.
-        var sc = Sa > 0 ? Sc / Sa : 0f;   // un-premultiply source channel
-        var dc = Da > 0 ? Dc / Da : 0f;   // un-premultiply dest channel
-        float blended;
-        if (sc <= 0.5f)
-            blended = 2f * sc * dc;
-        else
-            blended = 1f - 2f * (1f - sc) * (1f - dc);
-        // Re-premultiply for the Porter-Duff composite formula.
-        return blended * Sa * Da + Sc * (1f - Da) + Dc * (1f - Sa);
-    }
-
-    /// <summary>Soft-light blend channel (premultiplied inputs).</summary>
-    private static float SoftLightChannel(float Sc, float Sa, float Dc, float Da)
-    {
-        var sc = Sa > 0 ? Sc / Sa : 0f;
-        var dc = Da > 0 ? Dc / Da : 0f;
-        float blended;
-        if (sc <= 0.5f)
-            blended = dc - (1f - 2f * sc) * dc * (1f - dc);
-        else
-        {
-            float d;
-            if (dc <= 0.25f)
-                d = ((16f * dc - 12f) * dc + 4f) * dc;
-            else
-                d = MathF.Sqrt(dc);
-            blended = dc + (2f * sc - 1f) * (d - dc);
-        }
-        return blended * Sa * Da + Sc * (1f - Da) + Dc * (1f - Sa);
-    }
-
-    /// <summary>Color-dodge blend channel (premultiplied inputs).</summary>
-    private static float DodgeChannel(float Sc, float Sa, float Dc, float Da)
-    {
-        if (Dc == 0) return Sc * (1f - Da);
-        if (Sc == Sa) return Sa * Da + Sc * (1f - Da) + Dc * (1f - Sa);
-        var t = Math.Min(Da, Dc * Sa / (Sa - Sc));
-        return t * Sa + Sc * (1f - Da) + Dc * (1f - Sa);
-    }
-
-    /// <summary>Color-burn blend channel (premultiplied inputs).</summary>
-    private static float BurnChannel(float Sc, float Sa, float Dc, float Da)
-    {
-        if (Dc == Da) return Sa * Da + Sc * (1f - Da) + Dc * (1f - Sa);
-        if (Sc == 0) return Dc * (1f - Sa);
-        var t = Math.Max(0f, Da - (Da - Dc) * Sa / Sc);
-        return t * Sa + Sc * (1f - Da) + Dc * (1f - Sa);
     }
 
     /// <summary>

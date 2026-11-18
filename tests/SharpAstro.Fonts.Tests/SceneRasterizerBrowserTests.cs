@@ -28,6 +28,7 @@ public sealed class SceneRasterizerBrowserTests
         {
             TheoryData<string, string, string> documents = Strokes();
             foreach ((string name, string root, string body) in Rung3) documents.Add(name, root, body);
+            foreach ((string name, string root, string body) in Rung6) documents.Add(name, root, body);
             return documents;
         }
     }
@@ -222,8 +223,180 @@ public sealed class SceneRasterizerBrowserTests
             """),
     ];
 
+    // ---- Rung 6: blend modes and filters ----------------------------------------------------------------------------
+
+    private static string BlendCells()
+    {
+        string[] modes = ["normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "hard-light", "soft-light",
+            "difference", "exclusion", "hue", "saturation", "color", "luminosity"];
+        var cells = new StringBuilder();
+        for (int i = 0; i < modes.Length; i++)
+        {
+            // A backdrop that is not symmetric in its channels, and a layer of two colours, one of them half there, part
+            // of it over nothing: so every mode differs from every other somewhere, and "over nothing" is in each cell.
+            cells.Append(System.Globalization.CultureInfo.InvariantCulture, $"<g transform=\"translate({i % 4 * 44 + 2} {i / 4 * 34 + 2})\" style=\"isolation: isolate\">");
+            cells.Append("<rect width=\"26\" height=\"30\" fill=\"url(#back)\"/>");
+            cells.Append(System.Globalization.CultureInfo.InvariantCulture, $"<g style=\"mix-blend-mode: {modes[i]}\"><rect x=\"8\" y=\"4\" width=\"32\" height=\"12\" fill=\"#e07010\"/><rect x=\"8\" y=\"14\" width=\"32\" height=\"12\" fill=\"#2060d0\" fill-opacity=\"0.6\"/></g>");
+            cells.Append("</g>");
+        }
+        return cells.ToString();
+    }
+
+    /// <summary>
+    /// What rung 6 of the reader added: blend modes and filters. The two blend documents are the ones the reader is held
+    /// to in the Codecs repo. The filter documents are only here: Codecs has no pictures to filter, so <b>these are also
+    /// the oracle for how the reader resolves a filter</b> (its area, the units, which result a name means), as the text
+    /// documents are for its white-space rules. Every edge in them is on a whole pixel, so that where a filter's area
+    /// ends is not in question.
+    /// </summary>
+    internal static readonly (string Name, string Root, string Body)[] Rung6 =
+    [
+        ("blend-modes", "width=\"180\" height=\"140\"", $"""
+            <defs><linearGradient id="back" x2="1" y2="1"><stop offset="0" stop-color="#103050"/><stop offset="0.5" stop-color="#c0d040"/><stop offset="1" stop-color="#f0e8ff"/></linearGradient></defs>
+            {BlendCells()}
+            """),
+        ("blend-layers", "width=\"180\" height=\"110\"", """
+            <g style="isolation: isolate">
+            <rect width="180" height="110" fill="#e8e0d0"/>
+            <g transform="translate(2 2)"><rect width="24" height="24" fill="#3070c0"/><circle cx="24" cy="16" r="12" fill="#e03020" style="mix-blend-mode: multiply"/></g>
+            <g transform="translate(46 2)" style="isolation: isolate"><rect width="24" height="24" fill="#3070c0"/><circle cx="24" cy="16" r="12" fill="#e03020" style="mix-blend-mode: multiply"/></g>
+            <g transform="translate(90 2)" opacity="0.6"><rect width="24" height="24" fill="#3070c0"/><circle cx="24" cy="16" r="12" fill="#e03020" style="mix-blend-mode: multiply"/></g>
+            <g transform="translate(134 2)"><rect width="24" height="24" fill="#3070c0"/><circle cx="24" cy="16" r="12" fill="#e03020" opacity="0.5" style="mix-blend-mode: multiply"/></g>
+            <g transform="translate(2 38)"><rect width="24" height="24" fill="#3070c0"/><g style="mix-blend-mode: screen"><circle cx="20" cy="12" r="9" fill="#e03020"/><circle cx="28" cy="20" r="9" fill="#20a040"/></g></g>
+            <g transform="translate(46 38)"><rect width="24" height="24" fill="#3070c0"/><circle cx="24" cy="16" r="12" fill="#e03020" clip-path="url(#half)" style="mix-blend-mode: difference"/></g>
+            <g transform="translate(90 38)"><rect width="24" height="24" fill="#3070c0"/><circle cx="24" cy="16" r="9" fill="#e03020" stroke="#f0d020" stroke-width="5" style="mix-blend-mode: exclusion"/></g>
+            <g transform="translate(134 38)"><rect width="24" height="24" fill="#3070c0"/><use href="#dot" class="lit"/></g>
+            <g transform="translate(2 74)"><rect width="24" height="24" fill="#3070c0"/><g style="mix-blend-mode: multiply"><circle cx="20" cy="12" r="9" fill="#e0c020"/><circle cx="28" cy="20" r="9" fill="#20a0e0" style="mix-blend-mode: difference"/></g></g>
+            </g>
+            <defs><clipPath id="half"><rect x="12" width="14" height="40"/></clipPath><circle id="dot" cx="24" cy="16" r="12" fill="#e03020"/><style>.lit { mix-blend-mode: color-dodge }</style></defs>
+            """),
+        // Blurs: small ones (the Gaussian itself), large ones (three boxes), one way only, in linear light and not, and
+        // cut off where the filter's area ends.
+        ("filter-blur", "width=\"200\" height=\"150\"", """
+            <defs>
+            <filter id="b1"><feGaussianBlur stdDeviation="1"/></filter>
+            <filter id="b3" x="-0.5" y="-0.5" width="2" height="2"><feGaussianBlur stdDeviation="3"/></filter>
+            <filter id="b6" x="-1" y="-1" width="3" height="3"><feGaussianBlur stdDeviation="6"/></filter>
+            <filter id="bx" x="-0.5" y="-0.5" width="2" height="2"><feGaussianBlur stdDeviation="4 0"/></filter>
+            <filter id="by" x="-0.5" y="-0.5" width="2" height="2"><feGaussianBlur stdDeviation="0 4"/></filter>
+            <filter id="lin" x="-0.2" y="-0.2" width="1.4" height="1.4"><feGaussianBlur stdDeviation="3"/></filter>
+            <filter id="srgb" x="-0.2" y="-0.2" width="1.4" height="1.4" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="3"/></filter>
+            <filter id="cut"><feGaussianBlur stdDeviation="5"/></filter>
+            <filter id="user" filterUnits="userSpaceOnUse" x="140" y="100" width="40" height="30"><feGaussianBlur stdDeviation="2.5"/></filter>
+            </defs>
+            <rect x="10" y="10" width="30" height="30" fill="#c02040" filter="url(#b1)"/>
+            <rect x="60" y="10" width="30" height="30" fill="#2060c0" filter="url(#b3)"/>
+            <circle cx="140" cy="28" r="14" fill="#208040" filter="url(#b6)"/>
+            <rect x="12" y="62" width="24" height="24" fill="#404040" filter="url(#bx)"/>
+            <rect x="64" y="62" width="24" height="24" fill="#404040" filter="url(#by)"/>
+            <g filter="url(#lin)"><rect x="110" y="60" width="20" height="30" fill="#f00"/><rect x="130" y="60" width="20" height="30" fill="#0f0"/></g>
+            <g filter="url(#srgb)"><rect x="160" y="60" width="16" height="30" fill="#f00"/><rect x="176" y="60" width="16" height="30" fill="#0f0"/></g>
+            <rect x="20" y="108" width="40" height="20" fill="#804000" filter="url(#cut)"/>
+            <rect x="80" y="104" width="30" height="30" fill="#6040c0" fill-opacity="0.5" stroke="#000" stroke-width="2" filter="url(#b1)"/>
+            <circle cx="150" cy="110" r="22" fill="#c08000" filter="url(#user)"/>
+            """),
+        // Shadows and offsets: the drop shadow as one element and written out, under a scale, and with what is off the
+        // picture brought onto it.
+        ("filter-shadow", "width=\"200\" height=\"140\"", """
+            <defs>
+            <filter id="ds" x="-0.5" y="-0.5" width="2" height="2"><feDropShadow/></filter>
+            <filter id="ds2" x="-0.5" y="-0.5" width="2" height="2"><feDropShadow dx="5" dy="3" stdDeviation="1.5" flood-color="#c00040" flood-opacity="0.6"/></filter>
+            <filter id="hand" x="-0.5" y="-0.5" width="2" height="2"><feGaussianBlur in="SourceAlpha" stdDeviation="3"/><feOffset dx="4" dy="6" result="o"/>
+              <feFlood flood-color="#004080"/><feComposite in2="o" operator="in"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="off" x="-1" y="-1" width="3" height="3"><feOffset dx="10" dy="-6"/></filter>
+            <filter id="both" x="-1" y="-1" width="3" height="3"><feOffset dx="8" dy="8" result="moved"/><feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="moved"/></feMerge></filter>
+            <filter id="in" filterUnits="userSpaceOnUse" x="-40" y="80" width="100" height="60"><feOffset dx="30"/></filter>
+            <filter id="glow" x="-1" y="-1" width="3" height="3"><feGaussianBlur stdDeviation="2" result="g"/><feMerge><feMergeNode in="g"/><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            </defs>
+            <rect x="12" y="12" width="30" height="24" fill="#e0a020" filter="url(#ds)"/>
+            <circle cx="80" cy="24" r="13" fill="#40a0e0" filter="url(#ds2)"/>
+            <path d="M120 10 L150 10 L135 38 Z" fill="#60c060" filter="url(#hand)"/>
+            <rect x="160" y="20" width="16" height="16" fill="#a02080" filter="url(#off)"/>
+            <rect x="14" y="56" width="18" height="18" fill="#2080a0" fill-opacity="0.7" filter="url(#both)"/>
+            <g transform="translate(60 52) scale(2)"><rect x="2" y="2" width="12" height="9" fill="#e06020" filter="url(#ds)"/></g>
+            <circle cx="150" cy="70" r="10" fill="#f0e040" filter="url(#glow)"/>
+            <rect x="-28" y="96" width="26" height="26" fill="#804080" filter="url(#in)"/>
+            <g transform="translate(120 104) rotate(20)"><rect x="0" y="0" width="34" height="18" fill="#308060" filter="url(#ds2)"/></g>
+            """),
+        // Recolouring and putting pictures together.
+        ("filter-colour", "width=\"200\" height=\"150\"", """
+            <defs>
+            <linearGradient id="rb" x2="1"><stop offset="0" stop-color="#e02020"/><stop offset="0.5" stop-color="#20c040"/><stop offset="1" stop-color="#2040e0"/></linearGradient>
+            <filter id="sat0" x="0" y="0" width="1" height="1"><feColorMatrix type="saturate" values="0"/></filter>
+            <filter id="sat3" x="0" y="0" width="1" height="1"><feColorMatrix type="saturate" values="0.3"/></filter>
+            <filter id="hue" x="0" y="0" width="1" height="1"><feColorMatrix type="hueRotate" values="120"/></filter>
+            <filter id="l2a" x="0" y="0" width="1" height="1"><feColorMatrix type="luminanceToAlpha"/></filter>
+            <filter id="mat" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB"><feColorMatrix values="0 1 0 0 0  0 0 1 0 0  1 0 0 0 0  0 0 0 0.8 0"/></filter>
+            <filter id="tab" x="0" y="0" width="1" height="1"><feComponentTransfer><feFuncR type="table" tableValues="1 0"/><feFuncG type="table" tableValues="0 1 0"/></feComponentTransfer></filter>
+            <filter id="dis" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB"><feComponentTransfer><feFuncR type="discrete" tableValues="0 0.5 1"/><feFuncG type="discrete" tableValues="0 0.5 1"/><feFuncB type="discrete" tableValues="0 0.5 1"/></feComponentTransfer></filter>
+            <filter id="lin" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB"><feComponentTransfer><feFuncR type="linear" slope="0.5" intercept="0.25"/><feFuncG type="linear" slope="1.5" intercept="-0.2"/><feFuncA type="linear" slope="0.6"/></feComponentTransfer></filter>
+            <filter id="gam" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB"><feComponentTransfer><feFuncR type="gamma" exponent="2.2"/><feFuncG type="gamma" amplitude="0.8" exponent="0.5" offset="0.1"/><feFuncB type="gamma" exponent="0.4"/></feComponentTransfer></filter>
+            <filter id="cin" x="0" y="0" width="1" height="1"><feFlood flood-color="#f0c000" x="0" y="0" width="0.5" height="1" result="f"/><feComposite in="SourceGraphic" in2="f" operator="in"/></filter>
+            <filter id="cout" x="0" y="0" width="1" height="1"><feFlood flood-color="#f0c000" x="0" y="0" width="0.5" height="1" result="f"/><feComposite in="SourceGraphic" in2="f" operator="out"/></filter>
+            <filter id="catop" x="0" y="0" width="1.5" height="1"><feFlood flood-color="#f0c000" flood-opacity="0.6" result="f"/><feComposite in="f" in2="SourceGraphic" operator="atop"/></filter>
+            <filter id="cxor" x="-0.25" y="0" width="1.5" height="1"><feFlood flood-color="#00a0c0" flood-opacity="0.7" result="f"/><feComposite in="f" in2="SourceGraphic" operator="xor"/></filter>
+            <filter id="car" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB"><feFlood flood-color="#ffffff" flood-opacity="0.5" result="f"/><feComposite in="SourceGraphic" in2="f" operator="arithmetic" k1="0.5" k2="0.5" k3="0.2" k4="0.1"/></filter>
+            <filter id="bmul" x="0" y="0" width="1" height="1"><feFlood flood-color="#f0c000" result="f"/><feBlend in="SourceGraphic" in2="f" mode="multiply"/></filter>
+            <filter id="bscr" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB"><feFlood flood-color="#404080" result="f"/><feBlend in="f" in2="SourceGraphic" mode="screen"/></filter>
+            <filter id="bdif" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB"><feFlood flood-color="#c0c0c0" flood-opacity="0.7" result="f"/><feBlend in="f" in2="SourceGraphic" mode="difference"/></filter>
+            </defs>
+            <rect x="4" y="4" width="40" height="20" fill="url(#rb)"/>
+            <rect x="52" y="4" width="40" height="20" fill="url(#rb)" filter="url(#sat0)"/>
+            <rect x="100" y="4" width="40" height="20" fill="url(#rb)" filter="url(#sat3)"/>
+            <rect x="148" y="4" width="40" height="20" fill="url(#rb)" filter="url(#hue)"/>
+            <rect x="4" y="30" width="40" height="20" fill="url(#rb)" filter="url(#l2a)"/>
+            <rect x="52" y="30" width="40" height="20" fill="url(#rb)" filter="url(#mat)"/>
+            <rect x="100" y="30" width="40" height="20" fill="url(#rb)" filter="url(#tab)"/>
+            <rect x="148" y="30" width="40" height="20" fill="url(#rb)" filter="url(#dis)"/>
+            <rect x="4" y="56" width="40" height="20" fill="url(#rb)" filter="url(#lin)"/>
+            <rect x="52" y="56" width="40" height="20" fill="url(#rb)" filter="url(#gam)"/>
+            <rect x="100" y="56" width="40" height="20" fill="url(#rb)" filter="url(#cin)"/>
+            <rect x="148" y="56" width="40" height="20" fill="url(#rb)" filter="url(#cout)"/>
+            <circle cx="20" cy="94" r="10" fill="#2040e0" filter="url(#catop)"/>
+            <circle cx="76" cy="94" r="10" fill="#e02020" filter="url(#cxor)"/>
+            <rect x="100" y="84" width="40" height="20" fill="url(#rb)" filter="url(#car)"/>
+            <rect x="148" y="84" width="40" height="20" fill="url(#rb)" filter="url(#bmul)"/>
+            <rect x="4" y="112" width="40" height="20" fill="url(#rb)" filter="url(#bscr)"/>
+            <rect x="52" y="112" width="40" height="20" fill="url(#rb)" fill-opacity="0.6" filter="url(#bdif)"/>
+            """),
+        // What a browser was asked: each case a cell. See the notes on Rung6Edges below for what each one settled.
+        ("filter-edges", "width=\"200\" height=\"150\"", """
+            <defs>
+            <filter id="noname" x="-0.5" y="-0.5" width="2" height="2"><feOffset dx="6" result="a"/><feOffset in="nobody" dy="6"/></filter>
+            <filter id="neg" x="-0.5" y="-0.5" width="2" height="2"><feGaussianBlur stdDeviation="-3"/></filter>
+            <filter id="zero" x="-0.5" y="-0.5" width="2" height="2"><feGaussianBlur stdDeviation="0"/></filter>
+            <filter id="none"/>
+            <filter id="box"><feOffset/></filter>
+            <filter id="auto" x="-0.2" y="-0.2" width="1.4" height="1.4" color-interpolation-filters="auto"><feGaussianBlur stdDeviation="3"/></filter>
+            <filter id="sub" x="0" y="0" width="1" height="1"><feFlood flood-color="#c04000" x="50" y="50" width="12" height="30"/><feOffset dx="4"/><feMerge><feMergeNode in="SourceGraphic"/><feMergeNode/></feMerge></filter>
+            <filter id="bb" primitiveUnits="objectBoundingBox" x="-0.5" y="-0.5" width="2" height="2"><feOffset dx="0.25" dy="0.5"/></filter>
+            <filter id="noin2" x="0" y="0" width="1" height="1"><feFlood flood-color="#00c0c0" flood-opacity="0.5"/><feComposite in="SourceGraphic" operator="in"/></filter>
+            <filter id="order" x="-0.5" y="-0.5" width="2" height="2"><feOffset dx="8"/></filter>
+            <filter id="w0" width="0"><feOffset/></filter>
+            <filter id="cur" x="0" y="0" width="1" height="1" color="#c000c0"><feFlood flood-color="currentColor" flood-opacity="0.5"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <clipPath id="cl"><rect x="150" y="50" width="20" height="30"/></clipPath>
+            <rect id="sq" width="16" height="16" fill="#207040" filter="url(#order)"/>
+            </defs>
+            <rect x="10" y="10" width="14" height="14" fill="#c02020" filter="url(#noname)"/>
+            <rect x="50" y="10" width="14" height="14" fill="#2040c0" filter="url(#neg)"/>
+            <rect x="80" y="10" width="14" height="14" fill="#2040c0" filter="url(#zero)"/>
+            <rect x="110" y="10" width="14" height="14" fill="#c02020" filter="url(#none)"/>
+            <path d="M140 16 H160" stroke="#c02020" stroke-width="4" filter="url(#box)"/>
+            <rect x="170" y="10" width="14" height="14" fill="#208020" filter="url(#missing)"/>
+            <g filter="url(#auto)"><rect x="10" y="50" width="14" height="24" fill="#f00"/><rect x="24" y="50" width="14" height="24" fill="#0f0"/></g>
+            <rect x="50" y="50" width="30" height="30" fill="#4060a0" fill-opacity="0.4" filter="url(#sub)"/>
+            <rect x="100" y="50" width="16" height="12" fill="#806000" filter="url(#bb)"/>
+            <rect x="144" y="50" width="24" height="30" fill="#a02060" filter="url(#order)" clip-path="url(#cl)" opacity="0.6"/>
+            <rect x="10" y="100" width="24" height="24" fill="#e04040" filter="url(#noin2)"/>
+            <use href="#sq" x="50" y="100"/>
+            <svg x="90" y="100" width="20" height="20"><rect x="4" y="4" width="14" height="14" fill="#6040a0" filter="url(#order)"/></svg>
+            <rect x="130" y="100" width="14" height="14" fill="#c02020" filter="url(#w0)"/>
+            <rect x="160" y="100" width="24" height="24" fill="#208020" fill-opacity="0.4" color="#000" filter="url(#cur)"/>
+            """),
+    ];
+
     /// <summary>Documents that are in error on purpose: their issues are not required to be empty.</summary>
-    private static readonly HashSet<string> InError = ["rung3-edges"];
+    private static readonly HashSet<string> InError = ["rung3-edges", "filter-edges"];
 
     private static TheoryData<string, string, string> Strokes() => new()
     {
@@ -321,6 +494,13 @@ public sealed class SceneRasterizerBrowserTests
         {
             Directory.CreateDirectory(dump);
             PngWriter.WriteRgba(System.IO.Path.Combine(dump, name + "-ours.png"), ours.Pixels, width, height);
+            byte[] browser = new byte[width * height * 4];
+            for (int i = 0; i < width * height; i++)
+            {
+                theirs.AsSpan(i * 3, 3).CopyTo(browser.AsSpan(i * 4));
+                browser[i * 4 + 3] = 255;
+            }
+            PngWriter.WriteRgba(System.IO.Path.Combine(dump, name + "-browser.png"), browser, width, height);
         }
         mean.ShouldBeLessThan(MaxMeanDifference, report);
         wrong.ShouldBe(0, report);

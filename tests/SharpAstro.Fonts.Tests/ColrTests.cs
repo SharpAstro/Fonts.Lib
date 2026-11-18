@@ -81,6 +81,56 @@ public class ColrTests
         avgB.ShouldBeGreaterThanOrEqualTo(minB, $"U+{codepoint:X5} avgB={avgB}");
     }
 
+    // PaintComposite in a real font. A walk of this font's paint graphs found two modes: SrcIn in 296 glyphs (the
+    // laptop's screen is a gradient kept to the screen's shape) and SoftLight in 262 (the flags' shading). Until 2.0
+    // the compositing mixed colours of 0 to 255 with alphas of 0 to 1, so every channel that was not zero came out
+    // full. The values here were read off the picture after looking at it.
+    [Fact]
+    public void NotoCOLRv1_ASrcInComposite_KeepsTheSourcesColours()
+    {
+        var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.Noto_COLRv1));
+        var bmp = font.RenderColor(font.GetGlyphId(0x1F4BB), 160f);   // 💻
+        bmp.ShouldNotBeNull();
+
+        // The screen: a dark gradient, bluer at the top left than at the bottom right, and opaque.
+        var topLeft = PixelAt(bmp, 0.3f, 0.2f);
+        var bottomRight = PixelAt(bmp, 0.7f, 0.5f);
+        topLeft.A.ShouldBe((byte)255);
+        bottomRight.A.ShouldBe((byte)255);
+        ((int)topLeft.R).ShouldBeInRange(46, 66);
+        ((int)topLeft.G).ShouldBeInRange(82, 102);
+        ((int)topLeft.B).ShouldBeInRange(91, 111);
+        ((int)bottomRight.R).ShouldBeInRange(56, 76);
+        ((int)bottomRight.G).ShouldBeInRange(56, 76);
+        ((int)bottomRight.B).ShouldBeInRange(56, 76);
+
+        // Outside the screen's shape the gradient is not drawn at all.
+        PixelAt(bmp, 0.02f, 0.2f).A.ShouldBe((byte)0);
+    }
+
+    [Fact]
+    public void NotoCOLRv1_ASoftLightComposite_KeepsTheFlagsColours()
+    {
+        var font = OpenTypeFont.LoadFromFile(Fixtures.Path(Fixtures.Noto_COLRv1));
+        var bmp = font.RenderColor(3750, 160f);   // the flag of Albania, a ligature with no code point of its own
+        bmp.ShouldNotBeNull();
+
+        // The red field away from the shaded edges, and the black eagle in the middle.
+        var field = PixelAt(bmp, 0.3f, 0.2f);
+        ((int)field.R).ShouldBeInRange(223, 233);
+        ((int)field.G).ShouldBeInRange(25, 35);
+        ((int)field.B).ShouldBeInRange(27, 37);
+        field.A.ShouldBe((byte)255);
+        var eagle = PixelAt(bmp, 0.5f, 0.5f);
+        ((int)eagle.R + eagle.G + eagle.B).ShouldBeLessThan(30);
+    }
+
+    private static (byte R, byte G, byte B, byte A) PixelAt(ColorBitmap bmp, float fx, float fy)
+    {
+        var i = ((int)(bmp.Height * fy) * bmp.Width + (int)(bmp.Width * fx)) * 4;
+        return (bmp.Pixels[i], bmp.Pixels[i + 1], bmp.Pixels[i + 2], bmp.Pixels[i + 3]);
+    }
+
     [Fact]
     public void DejaVuSans_HasNoColorGlyphs()
     {

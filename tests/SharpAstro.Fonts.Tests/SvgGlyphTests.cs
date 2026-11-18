@@ -2,7 +2,6 @@ using System.Buffers.Binary;
 using System.Numerics;
 using SharpAstro.Fonts.Tables.Svg;
 using SharpAstro.VectorGraphics;
-using Rgba32 = SharpAstro.Fonts.Color.Rgba32;
 
 namespace SharpAstro.Fonts.Tests;
 
