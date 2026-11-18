@@ -1,4 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
+using SharpAstro.Codecs.Abstractions;
 using SharpAstro.Fonts.Scenes;
 using SharpAstro.Svg;
 using SharpAstro.VectorGraphics;
@@ -28,6 +30,152 @@ public sealed class SceneRasterizerTests
         double sum = 0;
         for (int i = 3; i < bitmap.Pixels.Length; i += 4) sum += bitmap.Pixels[i];
         return sum / 255.0;
+    }
+
+    // ---- Clips, masks, images, patterns (what SharpAstro.Svg 3.37 added to the scene) ---------------------------------
+
+    [Fact]
+    public void AClip_KeepsOnlyWhatIsInsideIt_AndTwoOutlinesSideBySideLeaveNoSeam()
+    {
+        ColorBitmap bitmap = Draw("<clipPath id=\"c\"><rect x=\"10\" y=\"10\" width=\"10\" height=\"10\"/></clipPath>" +
+            "<rect width=\"40\" height=\"40\" fill=\"#c06030\" clip-path=\"url(#c)\"/>");
+        Area(bitmap).ShouldBe(100, 1e-6);
+        At(bitmap, 10, 10).ShouldBe(((byte)0xc0, (byte)0x60, (byte)0x30, (byte)255));
+        At(bitmap, 9, 10).A.ShouldBe((byte)0);
+        At(bitmap, 20, 19).A.ShouldBe((byte)0);
+
+        // Two outlines that share an edge in the middle of a pixel column: that column is whole, not three quarters.
+        bitmap = Draw("<clipPath id=\"c\"><rect x=\"10\" y=\"10\" width=\"5.5\" height=\"10\"/><rect x=\"15.5\" y=\"10\" width=\"4.5\" height=\"10\"/></clipPath>" +
+            "<rect width=\"40\" height=\"40\" clip-path=\"url(#c)\"/>");
+        At(bitmap, 15, 15).A.ShouldBe((byte)255);
+        Area(bitmap).ShouldBe(100, 1e-3);
+
+        // A clip on one outline, and a clip the whole is intersected with.
+        bitmap = Draw("<clipPath id=\"c\" clip-path=\"url(#top)\"><rect x=\"0\" y=\"0\" width=\"20\" height=\"40\" clip-path=\"url(#left)\"/><rect x=\"30\" width=\"10\" height=\"40\"/></clipPath>" +
+            "<clipPath id=\"left\"><rect width=\"10\" height=\"40\"/></clipPath><clipPath id=\"top\"><rect width=\"40\" height=\"5\"/></clipPath>" +
+            "<rect width=\"40\" height=\"40\" clip-path=\"url(#c)\"/>");
+        Area(bitmap).ShouldBe(10 * 5 + 10 * 5, 1e-6);
+    }
+
+    [Theory]
+    // Luminance: 0.2125 R + 0.7154 G + 0.0721 B of the sRGB values, times the mask's alpha.
+    [InlineData("", "#fff", 1, 255)]
+    [InlineData("", "#000", 1, 0)]
+    [InlineData("", "#f00", 1, 54)]
+    [InlineData("", "#0f0", 1, 182)]
+    [InlineData("", "#fff", 0.5, 128)]
+    // Alpha: the colour does not matter.
+    [InlineData("mask-type=\"alpha\"", "#000", 0.5, 128)]
+    [InlineData("mask-type=\"alpha\"", "#f00", 1, 255)]
+    public void AMask_ScalesTheLayerByItsPicture(string attributes, string fill, double opacity, int alpha)
+    {
+        ColorBitmap bitmap = Draw($"<mask id=\"m\" {attributes}><rect x=\"10\" y=\"10\" width=\"10\" height=\"10\" fill=\"{fill}\" fill-opacity=\"{opacity.ToString(System.Globalization.CultureInfo.InvariantCulture)}\"/></mask>" +
+            "<rect width=\"40\" height=\"40\" fill=\"#102030\" mask=\"url(#m)\"/>");
+        ((int)At(bitmap, 15, 15).A).ShouldBeInRange(alpha - 1, alpha + 1);
+        // Outside the mask's picture nothing is kept.
+        At(bitmap, 25, 25).A.ShouldBe((byte)0);
+        if (alpha > 0) At(bitmap, 15, 15).B.ShouldBe((byte)0x30);
+    }
+
+    /// <summary>A 2 x 2 picture: red, green / blue, half-transparent white.</summary>
+    private static readonly byte[] FourPixels = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 128];
+
+    private static string Png() => "data:image/png;base64," + Convert.ToBase64String(SharpAstro.Png.PngWriter.Encode(FourPixels, 2, 2));
+
+    [Fact]
+    public void AnEmbeddedPng_IsDecodedAndFittedIntoItsBox()
+    {
+        // 2 x 2 into 20 x 20 at (10, 10): each of its pixels is a 10 x 10 block, blended only near where two meet.
+        ColorBitmap bitmap = Draw($"<image x=\"10\" y=\"10\" width=\"20\" height=\"20\" href=\"{Png()}\"/>");
+        At(bitmap, 11, 11).ShouldBe(((byte)255, (byte)0, (byte)0, (byte)255));
+        At(bitmap, 28, 11).ShouldBe(((byte)0, (byte)255, (byte)0, (byte)255));
+        At(bitmap, 11, 28).ShouldBe(((byte)0, (byte)0, (byte)255, (byte)255));
+        At(bitmap, 28, 28).ShouldBe(((byte)255, (byte)255, (byte)255, (byte)128));
+        At(bitmap, 9, 15).A.ShouldBe((byte)0);
+        At(bitmap, 30, 15).A.ShouldBe((byte)0);
+
+        // Meet: a 2 x 2 picture in a 20 x 10 box is 10 x 10, centred. Slice: 20 x 20, of which the box shows the middle.
+        Area(Draw($"<image x=\"10\" y=\"10\" width=\"20\" height=\"10\" href=\"{Png()}\" opacity=\"1\"/>")).ShouldBe(75 + 25 * 128 / 255.0, 0.5);
+        ColorBitmap sliced = Draw($"<image x=\"10\" y=\"10\" width=\"20\" height=\"10\" preserveAspectRatio=\"xMidYMin slice\" href=\"{Png()}\"/>");
+        At(sliced, 11, 11).ShouldBe(((byte)255, (byte)0, (byte)0, (byte)255));
+        At(sliced, 15, 20).A.ShouldBe((byte)0);
+        At(sliced, 28, 19).G.ShouldBe((byte)255);
+    }
+
+    [Fact]
+    public void ThePicturesDecoder_IsTheCallers_AskedOnceAPicture_AndAPictureNobodyDecodesIsNotDrawn()
+    {
+        VectorScene scene = Scene("<defs><image id=\"i\" width=\"10\" height=\"10\" href=\"https://203.0.113.1/never.jpg\"/></defs>" +
+            "<use href=\"#i\"/><use href=\"#i\" x=\"20\"/><rect y=\"30\" width=\"5\" height=\"5\"/>");
+
+        // By default only an embedded PNG is decoded: a picture that is only named is left out, and nothing is fetched.
+        Area(SceneRasterizer.Rasterize(scene, 40, 40)).ShouldBe(25, 1e-6);
+        SceneRasterizer.DecodePng(scene.Nodes.OfType<VectorImage>().First()).ShouldBeNull();
+
+        var asked = new List<string?>();
+        ColorBitmap bitmap = SceneRasterizer.Rasterize(scene, 40, 40, Matrix3x2.Identity, image =>
+        {
+            asked.Add(image.Source);
+            return new ColorBitmap([10, 20, 30, 255], 1, 1, 0, 0);
+        });
+        // Two nodes, but they are two instances of one picture only by address: each node is asked for once.
+        asked.ShouldBe(["https://203.0.113.1/never.jpg", "https://203.0.113.1/never.jpg"]);
+        At(bitmap, 5, 5).ShouldBe(((byte)10, (byte)20, (byte)30, (byte)255));
+        At(bitmap, 25, 5).ShouldBe(((byte)10, (byte)20, (byte)30, (byte)255));
+        Area(bitmap).ShouldBe(225, 1e-6);
+
+        // What a decoder returns is not trusted to be whole.
+        Area(SceneRasterizer.Rasterize(scene, 40, 40, Matrix3x2.Identity, _ => new ColorBitmap([1, 2, 3], 4, 4, 0, 0))).ShouldBe(25, 1e-6);
+    }
+
+    /// <summary>
+    /// A file decoder in the shape of the codecs facade's <c>ImageCodecs.TryDecode</c>, for a format made up here:
+    /// "RAW", a width, a height, then RGB bytes. It declines everything else.
+    /// </summary>
+    private static bool TryDecodeRaw(ReadOnlySpan<byte> data, [NotNullWhen(true)] out IDecodedImage? image)
+    {
+        image = null;
+        if (data.Length < 5 || !data[..3].SequenceEqual("RAW"u8)) return false;
+        image = new RasterImage(data[3], data[4], 3, SampleFormat.UInt8, data[5..].ToArray());
+        return true;
+    }
+
+    [Fact]
+    public void AFileDecoderInTheFacadesShape_DrawsEmbeddedPicturesOfItsFormats_AndNothingItDeclinesOrThatIsOnlyNamed()
+    {
+        // 2 x 1: a red pixel and a green one, in a format only the decoder given knows.
+        string raw = "data:image/x-raw;base64," + Convert.ToBase64String([(byte)'R', (byte)'A', (byte)'W', 2, 1, 255, 0, 0, 0, 255, 0]);
+        VectorScene scene = Scene($"<image width=\"20\" height=\"10\" preserveAspectRatio=\"none\" href=\"{raw}\"/>" +
+            "<image y=\"20\" width=\"10\" height=\"10\" href=\"data:image/x-other;base64,AAAA\"/>" +
+            "<image x=\"20\" y=\"20\" width=\"10\" height=\"10\" href=\"https://203.0.113.1/never.raw\"/>");
+
+        // Without it the format is not known and nothing is drawn.
+        Area(SceneRasterizer.Rasterize(scene, 40, 40)).ShouldBe(0, 1e-6);
+
+        // The method itself is passed, as ImageCodecs.TryDecode would be.
+        ColorBitmap bitmap = SceneRasterizer.Rasterize(scene, 40, 40, Matrix3x2.Identity, SceneRasterizer.DecodeWith(TryDecodeRaw));
+        At(bitmap, 2, 5).ShouldBe(((byte)255, (byte)0, (byte)0, (byte)255));
+        At(bitmap, 17, 5).ShouldBe(((byte)0, (byte)255, (byte)0, (byte)255));
+        // The picture it declines and the one that is only an address are left out.
+        Area(bitmap).ShouldBe(200, 1e-6);
+    }
+
+    [Fact]
+    public void APattern_RepeatsItsTile_AndWhatTheTileDrawsOutsideItselfIsCutOff()
+    {
+        // An 8 x 8 tile with a 4 x 4 square in its corner, and a square that sticks out of the tile to the right.
+        ColorBitmap bitmap = Draw("<pattern id=\"p\" patternUnits=\"userSpaceOnUse\" width=\"8\" height=\"8\"><rect width=\"4\" height=\"4\" fill=\"#c06030\"/>" +
+            "<rect x=\"6\" y=\"6\" width=\"6\" height=\"2\" fill=\"#0000ff\"/></pattern><rect width=\"40\" height=\"40\" fill=\"url(#p)\"/>");
+        foreach ((int x, int y) in ((int, int)[])[(1, 1), (9, 1), (17, 25), (33, 33)])
+        {
+            At(bitmap, x, y).ShouldBe(((byte)0xc0, (byte)0x60, (byte)0x30, (byte)255), $"{x},{y}");
+        }
+        At(bitmap, 5, 5).A.ShouldBe((byte)0);
+        At(bitmap, 7, 7).ShouldBe(((byte)0, (byte)0, (byte)255, (byte)255));
+        // The part of the blue square beyond the tile's edge is not drawn into the next tile.
+        At(bitmap, 9, 7).A.ShouldBe((byte)0);
+        // 25 tiles, each 16 + 4 pixels of ink.
+        Area(bitmap).ShouldBe(25 * 20, 1);
     }
 
     [Fact]

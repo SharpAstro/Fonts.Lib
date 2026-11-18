@@ -47,8 +47,8 @@
 
   <!--
     The vector scene (paths, paints, groups) that SceneRasterizer draws. It is the format-neutral model
-    SharpAstro.Svg reads SVG into; this library takes the model only, not the SVG reader. Same sibling-or-package
-    switch as SharpAstro.Png above, and the same repo.
+    SharpAstro.Svg reads SVG into. SceneRasterizer needs the model only; the reader is referenced further down, for
+    SVG glyphs. Same sibling-or-package switch as SharpAstro.Png above, and the same repo.
   -->
   <PropertyGroup>
     <UseLocalSharpAstroVector Condition="'$(UseLocalSharpAstroVector)' == '' AND Exists('..\..\..\Codecs\src\SharpAstro.Vector\SharpAstro.Vector.csproj')">true</UseLocalSharpAstroVector>
@@ -58,6 +58,20 @@
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalSharpAstroVector)' != 'true'">
     <PackageReference Include="SharpAstro.Vector" />
+  </ItemGroup>
+
+  <!--
+    The SVG reader, for the glyphs of an OpenType 'SVG ' table: it reads a glyph's document into the scene above,
+    and SceneRasterizer draws it. Same switch, same repo.
+  -->
+  <PropertyGroup>
+    <UseLocalSharpAstroSvg Condition="'$(UseLocalSharpAstroSvg)' == '' AND Exists('..\..\..\Codecs\src\SharpAstro.Svg\SharpAstro.Svg.csproj')">true</UseLocalSharpAstroSvg>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroSvg)' == 'true'">
+    <ProjectReference Include="..\..\..\Codecs\src\SharpAstro.Svg\SharpAstro.Svg.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroSvg)' != 'true'">
+    <PackageReference Include="SharpAstro.Svg" />
   </ItemGroup>
 
   <ItemGroup>

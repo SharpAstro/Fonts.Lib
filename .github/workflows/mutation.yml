@@ -1,0 +1,64 @@
+name: Mutation check
+
+# One deliberate bug at a time (tests/mutation/lists/*.py), rebuilt and tested: a bug the tests do not see is a
+# missing test. Every bug is a build and a test run, so this is never part of CI/CD and never run on a working
+# machine in full. It runs when asked: from the Actions tab, or by putting the label "mutation" on a pull request
+# (which is the only way before this file is on the default branch). The runner is Codecs' tests/mutation/mutate.py.
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Only bugs whose name contains this (empty for all)
+        required: false
+      codecs_ref:
+        description: Codecs branch to build against (empty for the one in tests/mutation/siblings, else its default)
+        required: false
+  pull_request:
+    types: [ labeled ]
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: 1
+
+jobs:
+  mutate:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'mutation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [ 0, 1, 2, 3, 4, 5 ]
+    steps:
+    # Side by side, as on a developer's machine: this then builds against the Codecs source beside it.
+    - uses: actions/checkout@v7
+      with:
+        path: Fonts.Lib
+    - name: Codecs beside it
+      env:
+        SIBLING_REF: ${{ inputs.codecs_ref }}
+      run: bash Fonts.Lib/tests/mutation/sibling.sh Codecs "$SIBLING_REF"
+    - uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 10.0.x
+    - name: Mutate
+      env:
+        ONLY: ${{ inputs.only }}
+        # Where the browser tests write both pictures; kept only when a shard fails before any bug is tried.
+        SVG_ORACLE_DUMP: ${{ runner.temp }}/oracle-dump
+      run: |
+        status=0
+        for list in Fonts.Lib/tests/mutation/lists/*.py; do
+          python3 Codecs/tests/mutation/mutate.py "$list" --shard ${{ matrix.shard }}/6 ${ONLY:+--only "$ONLY"} || status=1
+        done
+        exit $status
+    - name: Keep the pictures of a failing shard
+      if: failure() && matrix.shard == 0
+      uses: actions/upload-artifact@v7
+      with:
+        name: oracle-dump
+        path: ${{ runner.temp }}/oracle-dump
+        if-no-files-found: ignore
+        retention-days: 5
